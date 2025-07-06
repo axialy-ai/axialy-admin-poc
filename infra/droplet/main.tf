@@ -1,23 +1,34 @@
 terraform {
   required_version = ">= 1.6.0"
+
   required_providers {
-    digitalocean = { source = "digitalocean/digitalocean" version = ">= 2.36" }
-    template     = { source = "hashicorp/template"        version = ">= 2.4"  }
+    digitalocean = {
+      source  = "digitalocean/digitalocean"
+      version = ">= 2.36"
+    }
+    template = {
+      source  = "hashicorp/template"
+      version = ">= 2.4"
+    }
   }
 }
 
-provider "digitalocean" { token = var.do_token }
+provider "digitalocean" {
+  token = var.do_token
+}
 
 data "digitalocean_ssh_key" "deployer" {
   fingerprint = var.ssh_fingerprint
 }
 
 resource "digitalocean_droplet" "admin" {
-  name              = var.droplet_name
-  image             = "ubuntu-24-04-x64"
-  region            = var.region
-  size              = var.size
-  ssh_keys          = [data.digitalocean_ssh_key.deployer.id]
+  name   = var.droplet_name
+  image  = "ubuntu-24-04-x64"
+  region = var.region
+  size   = var.size
+  ssh_keys = [
+    data.digitalocean_ssh_key.deployer.id
+  ]
 
   /* cloud-init sets up Nginx, PHP, clones the repo and writes .env */
   user_data = templatefile("${path.module}/cloud-init.tpl", {
@@ -32,4 +43,6 @@ resource "digitalocean_droplet" "admin" {
   })
 }
 
-output "droplet_ip" { value = digitalocean_droplet.admin.ipv4_address }
+output "droplet_ip" {
+  value = digitalocean_droplet.admin.ipv4_address
+}
