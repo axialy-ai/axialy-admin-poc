@@ -14,7 +14,7 @@ provider "digitalocean" {
 }
 
 /* ──────────────────────────────────────────────────────────
- * 1 × managed MySQL cluster
+ *  Managed MySQL cluster for Axialy
  * ────────────────────────────────────────────────────────── */
 resource "digitalocean_database_cluster" "axialy" {
   name       = var.db_cluster_name
@@ -25,25 +25,32 @@ resource "digitalocean_database_cluster" "axialy" {
   node_count = 1
 }
 
-/* Logical DBs inside the cluster */
+/* ──────────────────────────────────────────────────────────
+ *  Logical databases inside the cluster
+ * ────────────────────────────────────────────────────────── */
+
+/* Admin-side DB (stores admin users, sessions, etc.) */
 resource "digitalocean_database_db" "admin" {
   cluster_id = digitalocean_database_cluster.axialy.id
   name       = "Axialy_ADMIN"
 }
 
+/* UI-side DB (stores UI transactional data) */
 resource "digitalocean_database_db" "ui" {
   cluster_id = digitalocean_database_cluster.axialy.id
   name       = "Axialy_UI"
 }
 
-/* Service user – DO autogenerates a strong password for us */
+/* ──────────────────────────────────────────────────────────
+ *  Service user – DigitalOcean generates a strong password
+ * ────────────────────────────────────────────────────────── */
 resource "digitalocean_database_user" "axialy_admin" {
   cluster_id = digitalocean_database_cluster.axialy.id
   name       = "axialy_admin"
 }
 
 /* ──────────────────────────────────────────────────────────
- * Outputs consumed by the GH workflow (become repo secrets)
+ *  Outputs consumed by the GitHub workflow
  * ────────────────────────────────────────────────────────── */
 output "db_host" { value = digitalocean_database_cluster.axialy.host }
 
