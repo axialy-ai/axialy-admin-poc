@@ -14,7 +14,7 @@ provider "digitalocean" {
 }
 
 /* ──────────────────────────────────────────────────────────────
- * Managed MySQL cluster for Axialy
+ *  Managed MySQL cluster for Axialy
  * ──────────────────────────────────────────────────────────── */
 resource "digitalocean_database_cluster" "axialy" {
   name       = var.db_cluster_name
@@ -26,7 +26,7 @@ resource "digitalocean_database_cluster" "axialy" {
 }
 
 /* ──────────────────────────────────────────────────────────────
- * Two logical DBs – **names must be lowercase** per DO rules.
+ *  Logical databases (names must be lower-case)
  * ──────────────────────────────────────────────────────────── */
 resource "digitalocean_database_db" "admin" {
   cluster_id = digitalocean_database_cluster.axialy.id
@@ -36,16 +36,28 @@ resource "digitalocean_database_db" "admin" {
 resource "digitalocean_database_db" "ui" {
   cluster_id = digitalocean_database_cluster.axialy.id
   name       = "axialy_ui"
-}
 
-/* Service user (one account is enough for both DBs) */
-resource "digitalocean_database_user" "axialy_admin" {
-  cluster_id = digitalocean_database_cluster.axialy.id
-  name       = "axialy_admin"
+  # Ensure this runs after the admin DB to avoid
+  # two concurrent DB-create calls on a brand-new cluster.
+  depends_on = [digitalocean_database_db.admin]
 }
 
 /* ──────────────────────────────────────────────────────────────
- *  Outputs used by the GitHub Actions workflow
+ *  Service user – created **after** both DBs exist so that
+ *  it inherits privileges on **both** databases.
+ * ──────────────────────────────────────────────────────────── */
+resource "digitalocean_database_user" "axialy_admin" {
+  cluster_id = digitalocean_database_cluster.axialy.id
+  name       = "axialy_admin"
+
+  depends_on = [
+    digitalocean_database_db.admin,
+    digitalocean_database_db.ui
+  ]
+}
+
+/* ──────────────────────────────────────────────────────────────
+ *  Outputs consumed by the GitHub Actions workflow
  * ──────────────────────────────────────────────────────────── */
 output "db_host" { value = digitalocean_database_cluster.axialy.host }
 output "db_port" { value = digitalocean_database_cluster.axialy.port }
