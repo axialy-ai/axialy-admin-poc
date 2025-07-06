@@ -6,10 +6,6 @@ terraform {
       source  = "digitalocean/digitalocean"
       version = ">= 2.36"
     }
-    random = {
-      source  = "hashicorp/random"
-      version = ">= 3.5"
-    }
   }
 }
 
@@ -17,7 +13,9 @@ provider "digitalocean" {
   token = var.do_token
 }
 
-/* ───────────── 1 managed MySQL cluster ───────────── */
+/* ──────────────────────────────────────────────────────────
+ * 1 × managed MySQL cluster
+ * ────────────────────────────────────────────────────────── */
 resource "digitalocean_database_cluster" "axialy" {
   name       = var.db_cluster_name
   region     = var.region
@@ -27,7 +25,7 @@ resource "digitalocean_database_cluster" "axialy" {
   node_count = 1
 }
 
-/* two logical DBs */
+/* Logical DBs inside the cluster */
 resource "digitalocean_database_db" "admin" {
   cluster_id = digitalocean_database_cluster.axialy.id
   name       = "Axialy_ADMIN"
@@ -38,30 +36,20 @@ resource "digitalocean_database_db" "ui" {
   name       = "Axialy_UI"
 }
 
-/* service user with random 24-char password */
-resource "random_password" "db_pwd" {
-  length  = 24
-  special = true
-}
-
+/* Service user – DO autogenerates a strong password for us */
 resource "digitalocean_database_user" "axialy_admin" {
   cluster_id = digitalocean_database_cluster.axialy.id
   name       = "axialy_admin"
-  password   = random_password.db_pwd.result
 }
 
-/* ───────────── outputs ───────────── */
-output "db_host" {
-  value = digitalocean_database_cluster.axialy.host
-}
+/* ──────────────────────────────────────────────────────────
+ * Outputs consumed by the GH workflow (become repo secrets)
+ * ────────────────────────────────────────────────────────── */
+output "db_host" { value = digitalocean_database_cluster.axialy.host }
 
-output "db_port" {
-  value = digitalocean_database_cluster.axialy.port
-}
+output "db_port" { value = digitalocean_database_cluster.axialy.port }
 
-output "db_user" {
-  value = digitalocean_database_user.axialy_admin.name
-}
+output "db_user" { value = digitalocean_database_user.axialy_admin.name }
 
 output "db_pass" {
   value     = digitalocean_database_user.axialy_admin.password
