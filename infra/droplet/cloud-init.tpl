@@ -3,7 +3,7 @@ packages:
   - nginx
   - php-fpm
   - php-mysql
-  - mysql-client          # needed for schema import
+  - mysql-client
   - git
 
 runcmd:
@@ -17,21 +17,21 @@ runcmd:
   - ln -snf /home/axialy/axialy/axialy-admin-product /var/www/axialy
 
   # ------------------------------------------------------------------
-  # Write .env so PHP can see the DB and default-admin credentials
+  # Write .env so PHP can see DB & default-admin credentials
   # ------------------------------------------------------------------
   - |
-    cat >/var/www/axialy/.env <<'EOF'
+    cat >/var/www/axialy/.env <<EOF
 DB_HOST=${db_host}
 DB_PORT=${db_port}
 DB_NAME=Axialy_ADMIN
 DB_USER=${db_user}
-DB_PASSWORD='${db_pass}'
+DB_PASSWORD="${db_pass}"
 
 UI_DB_HOST=${db_host}
 UI_DB_PORT=${db_port}
 UI_DB_NAME=Axialy_UI
 UI_DB_USER=${db_user}
-UI_DB_PASSWORD='${db_pass}'
+UI_DB_PASSWORD="${db_pass}"
 
 ADMIN_DEFAULT_USER=${admin_default_user}
 ADMIN_DEFAULT_EMAIL=${admin_default_email}
@@ -47,6 +47,6 @@ EOF
   # ------------------------------------------------------------------
   - |
     echo "Importing Axialy schema …"
-    mysql -h ${db_host} -P ${db_port} -u ${db_user} -p'${db_pass}' Axialy_ADMIN < /home/axialy/axialy/db/axialy_admin.sql
-    mysql -h ${db_host} -P ${db_port} -u ${db_user} -p'${db_pass}' Axialy_UI    < /home/axialy/axialy/db/axialy_ui.sql
+    mysql -h ${db_host} -P ${db_port} -u ${db_user} -p"${db_pass}" Axialy_ADMIN < /home/axialy/axialy/db/axialy_admin.sql
+    mysql -h ${db_host} -P ${db_port} -u ${db_user} -p"${db_pass}" Axialy_UI    < /home/axialy/axialy/db/axialy_ui.sql
     echo "Schema import complete."
