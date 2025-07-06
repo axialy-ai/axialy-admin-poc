@@ -1,5 +1,4 @@
 name: Axialy DB
-
 on:
   workflow_dispatch:
     inputs:
@@ -7,7 +6,7 @@ on:
         description: "DigitalOcean DB-cluster name"
         required: true
       region:
-        description: "DO region (e.g. nyc3, sfo3, fra1)"
+        description: "DO region (nyc3, sfo3, …)"
         default: nyc3
       size:
         description: "Cluster size slug"
@@ -30,7 +29,7 @@ jobs:
         run: terraform init -input=false
 
       - name: Terraform apply
-        id: tfout                       # ← capture outputs here
+        id: tfout
         working-directory: infra/database
         run: |
           terraform apply -auto-approve \
@@ -38,19 +37,24 @@ jobs:
             -var="region=${{ github.event.inputs.region }}" \
             -var="db_size=${{ github.event.inputs.size }}"
 
-          # Export outputs to $GITHUB_OUTPUT (new syntax)
           terraform output -json > tf.json
-          echo "db_host=$(jq -r .db_host.value tf.json)" >> "$GITHUB_OUTPUT"
-          echo "db_port=$(jq -r .db_port.value tf.json)" >> "$GITHUB_OUTPUT"
-          echo "db_user=$(jq -r .db_user.value tf.json)" >> "$GITHUB_OUTPUT"
-          echo "db_pass=$(jq -r .db_pass.value tf.json)" >> "$GITHUB_OUTPUT"
+          for k in db_host db_port \
+                   admin_db_name admin_db_user admin_db_pass \
+                   ui_db_name    ui_db_user    ui_db_pass; do
+            echo "$k=$(jq -r .${k}.value tf.json)" >>"$GITHUB_OUTPUT"
+          done
 
       - name: Save DB creds as repo secrets
         if: success()
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+        env: { GH_TOKEN: ${{ secrets.GH_PAT }} }
         run: |
-          gh secret set DB_HOST     --body "${{ steps.tfout.outputs.db_host }}"
-          gh secret set DB_PORT     --body "${{ steps.tfout.outputs.db_port }}"
-          gh secret set DB_USER     --body "${{ steps.tfout.outputs.db_user }}"
-          gh secret set DB_PASSWORD --body "${{ steps.tfout.outputs.db_pass }}"
+          gh secret set DB_HOST        --body "${{ steps.tfout.outputs.db_host }}"
+          gh secret set DB_PORT        --body "${{ steps.tfout.outputs.db_port }}"
+
+          gh secret set ADMIN_DB_NAME  --body "${{ steps.tfout.outputs.admin_db_name }}"
+          gh secret set ADMIN_DB_USER  --body "${{ steps.tfout.outputs.admin_db_user }}"
+          gh secret set ADMIN_DB_PASS  --body "${{ steps.tfout.outputs.admin_db_pass }}"
+
+          gh secret set UI_DB_NAME     --body "${{ steps.tfout.outputs.ui_db_name }}"
+          gh secret set UI_DB_USER     --body "${{ steps.tfout.outputs.ui_db_user }}"
+          gh secret set UI_DB_PASS     --body "${{ steps.tfout.outputs.ui_db_pass }}"
