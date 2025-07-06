@@ -1,0 +1,55 @@
+name: Axialy DB
+
+on:
+  workflow_dispatch:
+    inputs:
+      db_cluster_name:
+        description: "DigitalOcean DB-cluster name"
+        required: true
+      region:
+        description: "DO region (e.g. nyc3, sfo3, fra1)"
+        required: true
+        default: nyc3
+      size:
+        description: "Cluster size slug"
+        required: false
+        default: db-s-1vcpu-1gb
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    env:
+      TF_VAR_do_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: 1.6.6 }
+
+      - name: Terraform init
+        working-directory: infra/database
+        run: terraform init -input=false
+
+      - name: Terraform apply
+        working-directory: infra/database
+        run: |
+          terraform apply -auto-approve \
+            -var="db_cluster_name=${{ github.event.inputs.db_cluster_name }}" \
+            -var="region=${{ github.event.inputs.region }}" \
+            -var="db_size=${{ github.event.inputs.size }}"
+
+      - name: Capture outputs → repo secrets
+        id: tfout
+        working-directory: infra/database
+        run: |
+          terraform output -json > tf.json
+          echo "::set-output name=db_host::$(jq -r .db_host.value tf.json)"
+          echo "::set-output name=db_port::$(jq -r .db_port.value tf.json)"
+          echo "::set-output name=db_user::$(jq -r .db_user.value tf.json)"
+          echo "::set-output name=db_pass::$(jq -r .db_pass.value tf.json)"
+          gh secret set DB_HOST     --body "${{ steps.tfout.outputs.db_host }}"
+          gh secret set DB_PORT     --body "${{ steps.tfout.outputs.db_port }}"
+          gh secret set DB_USER     --body "${{ steps.tfout.outputs.db_user }}"
+          gh secret set DB_PASSWORD --body "${{ steps.tfout.outputs.db_pass }}"
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
