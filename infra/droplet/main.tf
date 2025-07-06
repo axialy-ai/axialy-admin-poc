@@ -1,3 +1,8 @@
+################################################################################
+#  infra/droplet/main.tf
+#  Provisions the Axialy Admin droplet on DigitalOcean
+################################################################################
+
 terraform {
   required_version = ">= 1.6.0"
 
@@ -6,43 +11,61 @@ terraform {
       source  = "digitalocean/digitalocean"
       version = ">= 2.36"
     }
-    template = {
-      source  = "hashicorp/template"
-      version = ">= 2.4"
-    }
+    # The deprecated hashicorp/template provider has been removed.
+    # templatefile() is a built-in function, so no extra provider is required.
   }
 }
 
+# -----------------------------------------------------------------------------#
+#  Providers
+# -----------------------------------------------------------------------------#
 provider "digitalocean" {
   token = var.do_token
 }
 
-data "digitalocean_ssh_key" "deployer" {
+# -----------------------------------------------------------------------------#
+#  Resources
+# -----------------------------------------------------------------------------#
+
+# Reference the existing SSH key that’s already uploaded to DO
+resource "digitalocean_ssh_key" "default" {
+  name        = "axialy_admin_key"
   fingerprint = var.ssh_fingerprint
 }
 
-resource "digitalocean_droplet" "admin" {
-  name   = var.droplet_name
-  image  = "ubuntu-24-04-x64"
-  region = var.region
-  size   = var.size
-  ssh_keys = [
-    data.digitalocean_ssh_key.deployer.id
-  ]
+# Main droplet that will host the Axialy Admin product
+resource "digitalocean_droplet" "axialy_admin" {
+  name       = var.droplet_name
+  region     = var.region
+  size       = var.size
+  image      = "ubuntu-24-04-x64"
 
-  /* cloud-init sets up Nginx, PHP, clones the repo and writes .env */
-  user_data = templatefile("${path.module}/cloud-init.tpl", {
+  ssh_keys   = [digitalocean_ssh_key.default.id]
+  backups    = false
+  ipv6       = false
+  monitoring = true
+
+  # cloud-init user-data pulls secrets & code, sets up Apache/PHP, etc.
+  user_data = templatefile("${path.module}/cloud-init.yaml", {
     repo_url               = var.repo_url
+
     db_host                = var.db_host
     db_port                = var.db_port
     db_user                = var.db_user
     db_pass                = var.db_pass
+
     admin_default_user     = var.admin_default_user
     admin_default_email    = var.admin_default_email
     admin_default_password = var.admin_default_password
   })
+
+  tags = ["axialy-admin"]
 }
 
+# -----------------------------------------------------------------------------#
+#  Outputs
+# -----------------------------------------------------------------------------#
 output "droplet_ip" {
-  value = digitalocean_droplet.admin.ipv4_address
+  description = "Public IPv4 address of the Axialy Admin droplet"
+  value       = digitalocean_droplet.axialy_admin.ipv4_address
 }
