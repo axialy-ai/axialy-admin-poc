@@ -1,12 +1,21 @@
 terraform {
   required_version = ">= 1.6.0"
+
   required_providers {
-    digitalocean = { source = "digitalocean/digitalocean" version = ">= 2.36" }
-    random       = { source = "hashicorp/random"           version = ">= 3.5"  }
+    digitalocean = {
+      source  = "digitalocean/digitalocean"
+      version = ">= 2.36"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = ">= 3.5"
+    }
   }
 }
 
-provider "digitalocean" { token = var.do_token }
+provider "digitalocean" {
+  token = var.do_token
+}
 
 /* ───────────── 1 managed MySQL cluster ───────────── */
 resource "digitalocean_database_cluster" "axialy" {
@@ -30,7 +39,10 @@ resource "digitalocean_database_db" "ui" {
 }
 
 /* service user with random 24-char password */
-resource "random_password" "db_pwd" { length = 24; special = true }
+resource "random_password" "db_pwd" {
+  length  = 24
+  special = true
+}
 
 resource "digitalocean_database_user" "axialy_admin" {
   cluster_id = digitalocean_database_cluster.axialy.id
@@ -39,7 +51,19 @@ resource "digitalocean_database_user" "axialy_admin" {
 }
 
 /* ───────────── outputs ───────────── */
-output "db_host" { value = digitalocean_database_cluster.axialy.host }
-output "db_port" { value = digitalocean_database_cluster.axialy.port }
-output "db_user" { value = digitalocean_database_user.axialy_admin.name }
-output "db_pass" { value = digitalocean_database_user.axialy_admin.password sensitive = true }
+output "db_host" {
+  value = digitalocean_database_cluster.axialy.host
+}
+
+output "db_port" {
+  value = digitalocean_database_cluster.axialy.port
+}
+
+output "db_user" {
+  value = digitalocean_database_user.axialy_admin.name
+}
+
+output "db_pass" {
+  value     = digitalocean_database_user.axialy_admin.password
+  sensitive = true
+}
