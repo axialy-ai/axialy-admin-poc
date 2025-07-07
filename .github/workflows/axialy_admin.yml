@@ -6,7 +6,7 @@ on:
       droplet_name:
         description: "Droplet hostname"
         required: true
-        default: "axialy-admin-ui"
+        default: "axialy-admin-prod"
       region:
         description: "DO region (e.g. nyc3, sfo3, fra1)"
         default: sfo3
@@ -68,6 +68,10 @@ jobs:
           echo "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           
+          # Set up SSH agent and add key with passphrase
+          eval "$(ssh-agent -s)"
+          echo "${{ secrets.DROPLET_SSH_PASSPHRASE }}" | ssh-add ~/.ssh/deploy_key
+          
           # Add droplet to known hosts
           ssh-keyscan -H ${{ steps.tfout.outputs.droplet_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
       
@@ -75,7 +79,11 @@ jobs:
         env:
           DROPLET_IP: ${{ steps.tfout.outputs.droplet_ip }}
           SSH_KEY_PATH: ~/.ssh/deploy_key
+          SSHPASS: ${{ secrets.DROPLET_SSH_PASSPHRASE }}
         run: |
+          # Install sshpass for passphrase handling
+          sudo apt-get update && sudo apt-get install -y sshpass
+          
           # Create deployment script
           cat > deploy.sh << 'EOF'
           #!/bin/bash
@@ -142,9 +150,13 @@ jobs:
           echo "Nginx configured successfully!"
           EOF
           
+          # Define SSH command with passphrase
+          SSH_CMD="sshpass -e ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no"
+          SCP_CMD="sshpass -e scp -i $SSH_KEY_PATH -o StrictHostKeyChecking=no"
+          
           # Copy and execute deployment script
-          scp -i $SSH_KEY_PATH -o StrictHostKeyChecking=no deploy.sh root@$DROPLET_IP:/tmp/
-          ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no root@$DROPLET_IP "bash /tmp/deploy.sh"
+          $SCP_CMD deploy.sh root@$DROPLET_IP:/tmp/
+          $SSH_CMD root@$DROPLET_IP "bash /tmp/deploy.sh"
           
           # Deploy application files
           echo "Deploying application files..."
@@ -153,14 +165,14 @@ jobs:
           mkdir -p /tmp/axialy-admin-deploy
           cp -r axialy-admin-product/* /tmp/axialy-admin-deploy/
           
-          # Deploy via rsync
-          rsync -avz --delete \
+          # Deploy via rsync with sshpass
+          sshpass -e rsync -avz --delete \
             -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" \
             /tmp/axialy-admin-deploy/ \
             root@$DROPLET_IP:/var/www/axialy-admin/
           
-          # Set proper permissions
-          ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no root@$DROPLET_IP << 'REMOTE_EOF'
+          # Set proper permissions and create environment file
+          $SSH_CMD root@$DROPLET_IP << 'REMOTE_EOF'
           chown -R www-data:www-data /var/www/axialy-admin
           find /var/www/axialy-admin -type d -exec chmod 755 {} \;
           find /var/www/axialy-admin -type f -exec chmod 644 {} \;
