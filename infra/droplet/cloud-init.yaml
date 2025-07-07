@@ -1,41 +1,51 @@
 #cloud-config
-### ---------------------------------------------------------------------------
-###  Base packages & users
-### ---------------------------------------------------------------------------
+###############################################################################
+# 0. Base OS packages
+###############################################################################
 package_update: true
 package_upgrade: true
 packages:
+  # Docker engine
   - docker.io
-  - docker-compose
+  # Docker Compose v2 (the “docker compose” sub-command lives in this plugin)
+  - docker-compose-plugin
+  # Reverse-proxy
   - nginx
+  # Convenience tools
+  - git
+  - curl
 
+###############################################################################
+# 1. Users / groups
+###############################################################################
 groups:
   - docker
 
 users:
+  - default
   - name: ubuntu
     groups: docker
     shell: /bin/bash
 
-### ---------------------------------------------------------------------------
-###  Write application .env from Terraform variables
-### ---------------------------------------------------------------------------
+###############################################################################
+# 2.  Secrets and environment expected by docker-compose
+###############################################################################
 write_files:
   - path: /home/ubuntu/app/.env
     owner: ubuntu:ubuntu
-    permissions: '0644'
+    permissions: '0600'
     content: |
-      # ------- DB ---------
+      # ----------------- DB -----------------
       DATABASE_HOST=${db_host}
       DATABASE_PORT=${db_port}
       DATABASE_USER=${db_user}
       DATABASE_PASSWORD=${db_pass}
-      # ------- First-time admin ---------
+      # ------------- First-time admin -------
       ADMIN_DEFAULT_USER=${admin_default_user}
       ADMIN_DEFAULT_EMAIL=${admin_default_email}
       ADMIN_DEFAULT_PASSWORD=${admin_default_password}
 
-  # Nginx reverse-proxy (port-80 → app_port; change 5173 if needed)
+  # Nginx vhost -> proxy port 5173 (adjust if your UI container uses a different port)
   - path: /etc/nginx/sites-available/admin.conf
     content: |
       server {
@@ -43,33 +53,37 @@ write_files:
         listen [::]:80 default_server;
         server_name _;
         location / {
-          proxy_pass http://localhost:5173;
+          proxy_pass http://127.0.0.1:5173;
           proxy_http_version 1.1;
           proxy_set_header Upgrade $http_upgrade;
           proxy_set_header Connection "upgrade";
           proxy_set_header Host $host;
-          proxy_cache_bypass $http_upgrade;
         }
       }
 
-### ---------------------------------------------------------------------------
-###  Cloud-init commands
-### ---------------------------------------------------------------------------
+###############################################################################
+# 3. Cloud-init commands (executed once on first boot)
+###############################################################################
 runcmd:
-  # Enable the new Nginx vhost
+  # 3-1. Enable and start system services
+  - systemctl enable --now docker
+  - systemctl enable --now nginx
+
+  # 3-2. Enable our Nginx vhost
   - ln -sf /etc/nginx/sites-available/admin.conf /etc/nginx/sites-enabled/admin.conf
   - rm -f /etc/nginx/sites-enabled/default
-  - systemctl restart nginx
+  - systemctl reload nginx
 
-  # Clone the repo as ubuntu and start the stack
-  - su - ubuntu -c "git clone ${repo_url} /home/ubuntu/app"
+  # 3-3. Pull & run Axialy-Admin with Docker Compose (as the ubuntu user)
+  - su - ubuntu -c "git clone --depth 1 ${repo_url} /home/ubuntu/app"
   - su - ubuntu -c "cd /home/ubuntu/app && docker compose pull"
   - su - ubuntu -c "cd /home/ubuntu/app && docker compose up -d"
 
-  # Make sure the compose stack auto-starts on reboot
-  - su - ubuntu -c "docker update --restart=unless-stopped \$(docker compose -f /home/ubuntu/app/docker-compose.yml ps -q)"
+  # 3-4. Make the stack survive reboots
+  - su - ubuntu -c "docker update --restart=unless-stopped $(docker compose -f /home/ubuntu/app/docker-compose.yml ps -q)"
 
+###############################################################################
+# 4. Friendly last line in /var/log/cloud-init-output.log
+###############################################################################
 final_message: |
-  Axialy-Admin deployment complete.
-  The Web UI will be available at http://$(curl -s http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address)
-
+  🔹 Axialy-Admin deployed.  Visit: http://$(curl -s http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address) 🔹
