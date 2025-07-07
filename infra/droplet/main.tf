@@ -42,62 +42,94 @@ resource "digitalocean_droplet" "axialy_admin" {
 }
 
 /* ──────────────────────────────────────────────────────────────
- *  Firewall rules
+ *  Firewall rules - use a unique name to avoid conflicts
  * ──────────────────────────────────────────────────────────── */
 resource "digitalocean_firewall" "axialy_admin" {
-  name = "axialy-admin-firewall"
-
+  name = "axialy-admin-firewall-${var.droplet_name}"
+  
   droplet_ids = [digitalocean_droplet.axialy_admin.id]
-
-  # Explicit dependency to ensure droplet is created first
-  depends_on = [digitalocean_droplet.axialy_admin]
-
+  
   # Allow SSH
   inbound_rule {
     protocol         = "tcp"
     port_range       = "22"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
-
+  
   # Allow HTTP
   inbound_rule {
     protocol         = "tcp"
     port_range       = "80"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
-
+  
   # Allow HTTPS
   inbound_rule {
     protocol         = "tcp"
     port_range       = "443"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
-
+  
   # Allow all outbound traffic
   outbound_rule {
     protocol              = "tcp"
     port_range            = "1-65535"
     destination_addresses = ["0.0.0.0/0", "::/0"]
   }
-
+  
   outbound_rule {
     protocol              = "udp"
     port_range            = "1-65535"
     destination_addresses = ["0.0.0.0/0", "::/0"]
   }
-
+  
   outbound_rule {
     protocol              = "icmp"
     destination_addresses = ["0.0.0.0/0", "::/0"]
   }
-}
-
-resource "null_resource" "debug" {
-  depends_on = [
-    digitalocean_droplet.axialy_admin,
-    digitalocean_firewall.axialy_admin
-  ]
-  provisioner "local-exec" {
-    command = "echo Droplet and firewall have been created successfully"
+} name to avoid conflicts
+ * ──────────────────────────────────────────────────────────── */
+resource "digitalocean_firewall" "axialy_admin" {
+  name = "axialy-admin-firewall-${var.droplet_name}"
+  
+  droplet_ids = [digitalocean_droplet.axialy_admin.id]
+  
+  # Allow SSH
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "22"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  
+  # Allow HTTP
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "80"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  
+  # Allow HTTPS
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "443"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  
+  # Allow all outbound traffic
+  outbound_rule {
+    protocol              = "tcp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  
+  outbound_rule {
+    protocol              = "udp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  
+  outbound_rule {
+    protocol              = "icmp"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
   }
 }
