@@ -1,9 +1,6 @@
-# -----------------------------------------------
-#  infra/droplet/cloud-init.yaml
-# -----------------------------------------------
 #cloud-config
 ###############################################################################
-# 0. Base OS preparation
+# 0.  Base OS preparation
 ###############################################################################
 package_update: true
 package_upgrade: true
@@ -12,37 +9,25 @@ packages:
   - docker-compose-plugin
   - nginx
   - git
-  - curl
 
 ###############################################################################
-# 1. Users / groups
-###############################################################################
-groups: [docker]
-
-users:
-  - default
-  - name: ubuntu
-    groups: docker
-    shell: /bin/bash
-
-###############################################################################
-# 2. Runtime configuration & secrets
+# 1.  Runtime secrets for the containers
 ###############################################################################
 write_files:
-  # --- .env passed into the containers --------------------------
+  # ── .env consumed by the app ──────────────────────────────────────────────
   - path: /home/ubuntu/app/.env
     owner: ubuntu:ubuntu
     permissions: "0600"
     content: |
-      DATABASE_HOST=${db_host}
-      DATABASE_PORT=${db_port}
-      DATABASE_USER=${db_user}
-      DATABASE_PASSWORD=${db_pass}
+      DB_HOST=${db_host}
+      DB_PORT=${db_port}
+      DB_USER=${db_user}
+      DB_PASS=${db_pass}
       ADMIN_DEFAULT_USER=${admin_default_user}
       ADMIN_DEFAULT_EMAIL=${admin_default_email}
       ADMIN_DEFAULT_PASSWORD=${admin_default_password}
 
-  # --- nginx reverse proxy --------------------------------------
+  # ── nginx reverse-proxy :80 → :5173 (Vite/React) ─────────────────────────
   - path: /etc/nginx/sites-available/admin.conf
     permissions: "0644"
     content: |
@@ -53,33 +38,31 @@ write_files:
         location / {
           proxy_pass         http://127.0.0.1:5173;
           proxy_http_version 1.1;
-          proxy_set_header   Upgrade $$http_upgrade;
+          proxy_set_header   Upgrade $http_upgrade;
           proxy_set_header   Connection "upgrade";
-          proxy_set_header   Host $$host;
+          proxy_set_header   Host $host;
         }
       }
 
 ###############################################################################
-# 3. One runcmd block
+# 2.  One-shot bootstrap
 ###############################################################################
 runcmd:
-  # 3-1 Enable services + clean default vhost
+  # 2-1 Docker & nginx ready
   - systemctl enable --now docker
-  - ln -sf /etc/nginx/sites-available/admin.conf /etc/nginx/sites-enabled/admin.conf
   - rm -f /etc/nginx/sites-enabled/default
+  - ln -sf /etc/nginx/sites-available/admin.conf /etc/nginx/sites-enabled/admin.conf
   - systemctl restart nginx
 
-  # 3-2 Pull & run the Admin stack
-  #     (If the repo is public you can delete the two TOKEN lines)
-  - GITHUB_TOKEN="${github_token}" \
-    su - ubuntu -c "git clone https://${github_token:+${github_token}@}github.com/axialy-ai/axialy-admin-poc.git /home/ubuntu/app || true"
-  - su - ubuntu -c "cd /home/ubuntu/app && docker compose pull --quiet"
-  - su - ubuntu -c "cd /home/ubuntu/app && docker compose up -d"
-  - su - ubuntu -c "docker update --restart=unless-stopped \
-        \$(docker compose -f /home/ubuntu/app/docker-compose.yml ps -q)"
+  # 2-2 Clone repo & start stack (token-less HTTPS because the droplet’s SSH key
+  #     already has access; adjust to SSH clone if you prefer).
+  - "su - ubuntu -c 'git clone ${repo_url} /home/ubuntu/app || (cd /home/ubuntu/app && git pull)'"
+  - "su - ubuntu -c 'cd /home/ubuntu/app && docker compose pull --quiet || true'"
+  - "su - ubuntu -c 'cd /home/ubuntu/app && docker compose up -d --remove-orphans'"
+  - "su - ubuntu -c \"docker update --restart=unless-stopped $(docker compose -f /home/ubuntu/app/docker-compose.yml ps -q)\""
 
 ###############################################################################
-# 4. Epilogue
+# 3.  Finish line
 ###############################################################################
 final_message: |
-  ✅ Axialy Admin deployed — nginx is forwarding to http://127.0.0.1:5173
+  ✅  Axialy Admin deployed – nginx is forwarding :80 → :5173
