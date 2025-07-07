@@ -8,7 +8,7 @@ on:
         required: true
       region:
         description: "DO region (e.g. nyc3, sfo3, fra1)"
-        default: nyc3
+        default: sfo3
       size:
         description: "Cluster size slug"
         default: db-s-1vcpu-1gb
@@ -17,7 +17,7 @@ jobs:
   apply:
     runs-on: ubuntu-latest
     env:
-      TF_VAR_do_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+      TF_VAR_do_token: ${{ secrets.DO_PAT }}
     
     steps:
       - name: Checkout code
