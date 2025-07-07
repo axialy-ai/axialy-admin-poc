@@ -6,7 +6,7 @@ on:
       droplet_name:
         description: "Droplet hostname"
         required: true
-        default: "axialy-admin-ui"
+        default: "axialy-admin-prod"
       region:
         description: "DO region (e.g. nyc3, sfo3, fra1)"
         default: sfo3
@@ -166,25 +166,25 @@ jobs:
           find /var/www/axialy-admin -type f -exec chmod 644 {} \;
           
           # Create environment file with database credentials
-          cat > /var/www/axialy-admin/.env << 'ENV_EOF'
+          cat > /var/www/axialy-admin/.env << ENV_EOF
           # Axialy Admin Database
-          DB_HOST=${DB_HOST}
-          DB_PORT=${DB_PORT}
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_PORT=${{ secrets.DB_PORT }}
           DB_NAME=axialy_admin
-          DB_USER=${DB_USER}
-          DB_PASSWORD=${DB_PASSWORD}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           
           # Axialy UI Database
-          UI_DB_HOST=${DB_HOST}
-          UI_DB_PORT=${DB_PORT}
+          UI_DB_HOST=${{ secrets.DB_HOST }}
+          UI_DB_PORT=${{ secrets.DB_PORT }}
           UI_DB_NAME=axialy_ui
-          UI_DB_USER=${DB_USER}
-          UI_DB_PASSWORD=${DB_PASSWORD}
+          UI_DB_USER=${{ secrets.DB_USER }}
+          UI_DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           
           # Admin defaults
-          ADMIN_DEFAULT_USER=${ADMIN_DEFAULT_USER}
-          ADMIN_DEFAULT_EMAIL=${ADMIN_DEFAULT_EMAIL}
-          ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD}
+          ADMIN_DEFAULT_USER=${{ secrets.ADMIN_DEFAULT_USER }}
+          ADMIN_DEFAULT_EMAIL=${{ secrets.ADMIN_DEFAULT_EMAIL }}
+          ADMIN_DEFAULT_PASSWORD=${{ secrets.ADMIN_DEFAULT_PASSWORD }}
           ENV_EOF
           
           chmod 640 /var/www/axialy-admin/.env
