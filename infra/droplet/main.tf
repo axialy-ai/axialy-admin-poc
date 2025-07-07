@@ -1,46 +1,43 @@
-################################################################################
-#  infra/droplet/main.tf
-#  Provisions the Axialy Admin droplet on DigitalOcean
-################################################################################
+###############################################################################
+# Terraform configuration
+###############################################################################
 
 terraform {
   required_version = ">= 1.6.0"
+
   required_providers {
     digitalocean = {
       source  = "digitalocean/digitalocean"
-      version = ">= 2.36"
+      version = ">= 2.36.0"
     }
   }
 }
 
-# ── Provider ────────────────────────────────────────────────────────────
-provider "digitalocean" {
-  token = var.do_token
-}
+###############################################################################
+# Variables
+###############################################################################
 
-# ── Resources ───────────────────────────────────────────────────────────
+variable "droplet_name"            { type = string }
+variable "region"                  { type = string }
+variable "size"                    { type = string }
+variable "repo_url"                { type = string }
+variable "ssh_public_key"          { type = string }
+variable "db_host"                 { type = string }
+variable "db_port"                 { type = number }
+variable "db_user"                 { type = string }
+variable "db_pass"                 { type = string }
+variable "admin_default_user"      { type = string }
+variable "admin_default_email"     { type = string }
+variable "admin_default_password"  { type = string }
 
-# Upload (or reuse) the SSH key; satisfies the required public_key field
-resource "digitalocean_ssh_key" "default" {
-  name       = "axialy_admin_key"
-  public_key = var.ssh_public_key
-}
+###############################################################################
+# Render cloud-init template in-memory (no file lookup at runtime)
+###############################################################################
 
-# Main droplet hosting Axialy Admin
-resource "digitalocean_droplet" "axialy_admin" {
-  name       = var.droplet_name
-  region     = var.region
-  size       = var.size
-  image      = "ubuntu-24-04-x64"
+data "templatefile" "user_data" {
+  template = file("${path.module}/cloud-init.tftpl")
 
-  ssh_keys   = [digitalocean_ssh_key.default.id]
-
-  backups    = false
-  ipv6       = false
-  monitoring = true
-
-  # cloud-init script pulls repo + writes .env
-  user_data = templatefile("${path.module}/cloud-init.yaml", {
+  vars = {
     repo_url               = var.repo_url
     db_host                = var.db_host
     db_port                = var.db_port
@@ -49,13 +46,31 @@ resource "digitalocean_droplet" "axialy_admin" {
     admin_default_user     = var.admin_default_user
     admin_default_email    = var.admin_default_email
     admin_default_password = var.admin_default_password
-  })
-
-  tags = ["axialy-admin"]
+  }
 }
 
-# ── Outputs ─────────────────────────────────────────────────────────────
+###############################################################################
+# DigitalOcean resources
+###############################################################################
+
+resource "digitalocean_ssh_key" "default" {
+  name       = "${var.droplet_name}-key"
+  public_key = var.ssh_public_key
+}
+
+resource "digitalocean_droplet" "admin" {
+  name              = var.droplet_name
+  region            = var.region
+  size              = var.size
+  image             = "ubuntu-24-04-x64"
+  ssh_keys          = [digitalocean_ssh_key.default.id]
+  user_data         = data.templatefile.user_data.rendered
+  monitoring        = true
+  backups           = false
+  ipv6              = true
+  private_networking = true
+}
+
 output "droplet_ip" {
-  description = "Public IPv4 address of the Axialy Admin droplet"
-  value       = digitalocean_droplet.axialy_admin.ipv4_address
+  value = digitalocean_droplet.admin.ipv4_address
 }
