@@ -14,11 +14,10 @@ provider "digitalocean" {
 }
 
 # --------------------------------------------------------------------
-#  SSH key to let you log in
+#  Re-use the key that’s **already** in the DigitalOcean account
 # --------------------------------------------------------------------
-resource "digitalocean_ssh_key" "default" {
-  name       = "admin-key"
-  public_key = var.ssh_public_key
+data "digitalocean_ssh_key" "default" {
+  fingerprint = var.ssh_fingerprint
 }
 
 # --------------------------------------------------------------------
@@ -29,7 +28,7 @@ resource "digitalocean_droplet" "admin" {
   region            = var.region
   size              = var.size
   image             = "ubuntu-24-04-x64"
-  ssh_keys          = [digitalocean_ssh_key.default.id]
+  ssh_keys          = [data.digitalocean_ssh_key.default.id]
 
   user_data = templatefile("${path.module}/cloud-init.yaml", {
     repo_url               = var.repo_url
