@@ -1,112 +1,155 @@
 <?php
 /**
- * Axialy – AdminDBConfig
- * --------------------------------------------------------------------------
- *  • Primary source of truth → environment variables (set by Docker/Ansible)
- *    ─ DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
- *  • Optional local fallback: read the first readable “.env” file found
- *    one or two levels above /includes/ (handy for dev without Docker)
- *  • PDO is created lazily and kept as a singleton.
+ * Axialy Admin – central DB connection / config helper
+ *
+ * Public usage (unchanged):
+ *   $db = AdminDBConfig::getInstance()->getPdo();  // PDO handle
+ *   $host = AdminDBConfig::getInstance()->getHost(); // etc.
+ *
+ * © 2025 Axialy – All rights reserved.
  */
 
 namespace Axialy\AdminConfig;
 
-class AdminDBConfig
+use PDO;
+use RuntimeException;
+
+final class AdminDBConfig
 {
+    private const REQUIRED_VARS = ['DB_HOST', 'DB_USER', 'DB_PASSWORD'];
+
     private static ?self $instance = null;
-    private \PDO $pdo;
 
-    /** Disallow direct construction */
-    private function __construct()
-    {
-        // Make sure required env vars exist (try to bootstrap from .env if not)
-        $this->ensureEnvVars();
+    /* Connection details */
+    private string $host;
+    private string $user;
+    private string $password;
+    private string $port;
+    private string $nameAdmin;
+    private string $nameUI;
 
-        $host = getenv('DB_HOST')       ?: '';
-        $port = getenv('DB_PORT')       ?: '3306';
-        $db   = getenv('DB_NAME')       ?: 'Axialy_ADMIN';
-        $user = getenv('DB_USER')       ?: '';
-        $pass = getenv('DB_PASSWORD')   ?: '';
+    /** @var PDO[] Lazy-initialised PDO handles, keyed by DB name */
+    private array $pdoPool = [];
 
-        if ($host === '' || $user === '' || $pass === '') {
-            throw new \RuntimeException(
-                'Missing DB environment variables (DB_HOST / DB_USER / DB_PASSWORD).'
-            );
-        }
+    /* --------------------------------------------------------------------- */
 
-        $dsn = sprintf(
-            'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
-            $host,
-            $port,
-            $db
-        );
-
-        $this->pdo = new \PDO(
-            $dsn,
-            $user,
-            $pass,
-            [
-                \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
-                \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
-                \PDO::ATTR_PERSISTENT         => false,
-            ]
-        );
-    }
-
-    /** --------------------------------------------------------------------
-     *  Exposed API
-     *  ------------------------------------------------------------------ */
+    /**
+     * Singleton accessor.
+     */
     public static function getInstance(): self
     {
         return self::$instance ??= new self();
     }
 
-    public function getPdo(): \PDO
+    /**
+     * @throws RuntimeException if required env vars are still missing.
+     */
+    private function __construct()
     {
-        return $this->pdo;
-    }
+        // 1️⃣  Load .env once if env vars are missing.
+        $this->bootstrapEnvIfRequired();
 
-    /** --------------------------------------------------------------------
-     *  Helpers
-     *  ------------------------------------------------------------------ */
-    private function ensureEnvVars(): void
-    {
-        if (getenv('DB_HOST') !== false) {
-            return;                     // Everything already set (container)
+        // 2️⃣  Validate.
+        foreach (self::REQUIRED_VARS as $key) {
+            if (getenv($key) === false) {
+                throw new RuntimeException(
+                    'Missing DB environment variables (DB_HOST / DB_USER / DB_PASSWORD).'
+                );
+            }
         }
 
-        // Dev mode – try to read a local .env
-        $candidates = [
-            dirname(__DIR__, 2) . '/.env',     // project root
-            dirname(__DIR__, 3) . '/.env',     // one level higher
-        ];
+        // 3️⃣  Capture.
+        $this->host       = getenv('DB_HOST');
+        $this->user       = getenv('DB_USER');
+        $this->password   = getenv('DB_PASSWORD');
+        $this->port       = getenv('DB_PORT') ?: '3306';
+        $this->nameAdmin  = getenv('DB_NAME')     ?: 'axialy_admin';
+        $this->nameUI     = getenv('UI_DB_NAME')  ?: 'axialy_ui';
+    }
 
-        foreach ($candidates as $file) {
-            if (!is_readable($file)) {
-                continue;
+    /* --------------------------------------------------------------------- */
+    /*  Public getters                                                       */
+    /* --------------------------------------------------------------------- */
+
+    public function getHost(): string      { return $this->host; }
+    public function getUser(): string      { return $this->user; }
+    public function getPassword(): string  { return $this->password; }
+    public function getPort(): string      { return $this->port; }
+
+    /**
+     * Convenience: obtain a PDO for the Admin DB (default).
+     */
+    public function getPdo(): PDO
+    {
+        return $this->getPdoFor($this->nameAdmin);
+    }
+
+    /**
+     * Convenience: obtain a PDO for the UI DB.
+     */
+    public function getPdoUI(): PDO
+    {
+        return $this->getPdoFor($this->nameUI);
+    }
+
+    /**
+     * Generic: obtain (and reuse) a PDO for any DB name.
+     */
+    public function getPdoFor(string $dbName): PDO
+    {
+        if (!isset($this->pdoPool[$dbName])) {
+            $dsn = sprintf(
+                'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
+                $this->host,
+                $this->port,
+                $dbName
+            );
+
+            $this->pdoPool[$dbName] = new PDO(
+                $dsn,
+                $this->user,
+                $this->password,
+                [
+                    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                    PDO::ATTR_PERSISTENT         => false,
+                ]
+            );
+        }
+        return $this->pdoPool[$dbName];
+    }
+
+    /* --------------------------------------------------------------------- */
+    /*  Internal helpers                                                     */
+    /* --------------------------------------------------------------------- */
+
+    /**
+     * If any required env var is absent, attempt to parse a `.env` file in the
+     * project root and populate the process environment *once*.
+     */
+    private function bootstrapEnvIfRequired(): void
+    {
+        foreach (self::REQUIRED_VARS as $key) {
+            if (getenv($key) !== false) {
+                continue; // already present
             }
 
-            foreach (file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-                $line = trim($line);
-                if ($line === '' || $line[0] === '#') {
-                    continue;
-                }
-                if (!str_contains($line, '=')) {
-                    continue;
-                }
+            // Parse .env (key=value, no quotes) – tolerant of Windows line-endings.
+            $envPath = dirname(__DIR__, 1) . '/.env';
+            if (!is_file($envPath)) {
+                return; // Nothing to load.
+            }
 
+            $lines = file($envPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            foreach ($lines as $line) {
+                if ($line[0] === '#') { continue; }
                 [$k, $v] = array_map('trim', explode('=', $line, 2));
-                // Don’t overwrite existing values
                 if ($k !== '' && getenv($k) === false) {
                     putenv("$k=$v");
+                    $_ENV[$k] = $v; // For frameworks relying on $_ENV
                 }
             }
-            // Stop after the first readable .env
-            break;
+            return; // Loaded once; break out.
         }
     }
-
-    /** Block cloning & unserialising */
-    private function __clone() {}
-    public function __wakeup() { throw new \Exception('Cannot unserialise singleton'); }
 }
