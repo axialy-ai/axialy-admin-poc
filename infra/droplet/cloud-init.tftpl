@@ -1,0 +1,22 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+write_files:
+  - path: /etc/myapp/.env
+    owner: root:root
+    permissions: "0600"
+    content: |
+      DB_HOST=${db_host}
+      DB_PORT=${db_port}
+      DB_USER=${db_user}
+      DB_PASS=${db_pass}
+      ADMIN_DEFAULT_USER=${admin_default_user}
+      ADMIN_DEFAULT_EMAIL=${admin_default_email}
+      ADMIN_DEFAULT_PASSWORD=${admin_default_password}
+
+runcmd:
+  - apt-get install -y git docker.io
+  - git clone ${repo_url} /opt/myapp
+  - chmod +x /opt/myapp/deploy.sh
+  - /opt/myapp/deploy.sh
