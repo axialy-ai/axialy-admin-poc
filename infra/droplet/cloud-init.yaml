@@ -1,6 +1,9 @@
+# -----------------------------------------------
+#  infra/droplet/cloud-init.yaml
+# -----------------------------------------------
 #cloud-config
 ###############################################################################
-# 0.  Base OS preparation
+# 0. Base OS preparation
 ###############################################################################
 package_update: true
 package_upgrade: true
@@ -12,7 +15,7 @@ packages:
   - curl
 
 ###############################################################################
-# 1.  Users / groups
+# 1. Users / groups
 ###############################################################################
 groups: [docker]
 
@@ -23,9 +26,10 @@ users:
     shell: /bin/bash
 
 ###############################################################################
-# 2.  Runtime configuration & secrets
+# 2. Runtime configuration & secrets
 ###############################################################################
 write_files:
+  # --- .env passed into the containers --------------------------
   - path: /home/ubuntu/app/.env
     owner: ubuntu:ubuntu
     permissions: "0600"
@@ -38,40 +42,44 @@ write_files:
       ADMIN_DEFAULT_EMAIL=${admin_default_email}
       ADMIN_DEFAULT_PASSWORD=${admin_default_password}
 
+  # --- nginx reverse proxy --------------------------------------
   - path: /etc/nginx/sites-available/admin.conf
+    permissions: "0644"
     content: |
       server {
         listen 80 default_server;
         listen [::]:80 default_server;
         server_name _;
         location / {
-          proxy_pass http://127.0.0.1:5173;
+          proxy_pass         http://127.0.0.1:5173;
           proxy_http_version 1.1;
-          proxy_set_header Upgrade $http_upgrade;
-          proxy_set_header Connection "upgrade";
-          proxy_set_header Host $host;
+          proxy_set_header   Upgrade $$http_upgrade;
+          proxy_set_header   Connection "upgrade";
+          proxy_set_header   Host $$host;
         }
       }
 
 ###############################################################################
-# 3.  ONE runcmd block - so nothing is overwritten
+# 3. One runcmd block
 ###############################################################################
 runcmd:
-  # 3-1. Enable & start services
+  # 3-1 Enable services + clean default vhost
   - systemctl enable --now docker
   - ln -sf /etc/nginx/sites-available/admin.conf /etc/nginx/sites-enabled/admin.conf
   - rm -f /etc/nginx/sites-enabled/default
   - systemctl restart nginx
 
-  # 3-2. Pull & run the Admin stack
-  - su - ubuntu -c "git clone --depth 1 ${repo_url} /home/ubuntu/app || true"
-  - su - ubuntu -c "cd /home/ubuntu/app && docker compose pull"
+  # 3-2 Pull & run the Admin stack
+  #     (If the repo is public you can delete the two TOKEN lines)
+  - GITHUB_TOKEN="${github_token}" \
+    su - ubuntu -c "git clone https://${github_token:+${github_token}@}github.com/axialy-ai/axialy-admin-poc.git /home/ubuntu/app || true"
+  - su - ubuntu -c "cd /home/ubuntu/app && docker compose pull --quiet"
   - su - ubuntu -c "cd /home/ubuntu/app && docker compose up -d"
   - su - ubuntu -c "docker update --restart=unless-stopped \
-        $(docker compose -f /home/ubuntu/app/docker-compose.yml ps -q)"
+        \$(docker compose -f /home/ubuntu/app/docker-compose.yml ps -q)"
 
 ###############################################################################
-# 4.  Epilogue
+# 4. Epilogue
 ###############################################################################
 final_message: |
-  Axialy Admin base image ready - nginx is listening on :80
+  ✅ Axialy Admin deployed — nginx is forwarding to http://127.0.0.1:5173
