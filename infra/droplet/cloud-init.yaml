@@ -4,7 +4,7 @@
 ###############################################################################
 package_update: true
 package_upgrade: true
-packages:                    # <- installs these automatically, in order
+packages:
   - docker.io
   - docker-compose-plugin
   - nginx
@@ -28,7 +28,7 @@ users:
 write_files:
   - path: /home/ubuntu/app/.env
     owner: ubuntu:ubuntu
-    permissions: '0600'
+    permissions: "0600"
     content: |
       DATABASE_HOST=${db_host}
       DATABASE_PORT=${db_port}
@@ -54,7 +54,7 @@ write_files:
       }
 
 ###############################################################################
-# 3.  ONE runcmd block – so nothing is overwritten
+# 3.  ONE runcmd block - so nothing is overwritten
 ###############################################################################
 runcmd:
   # 3-1. Enable & start services
@@ -74,4 +74,4 @@ runcmd:
 # 4.  Epilogue
 ###############################################################################
 final_message: |
-  ✅ Axialy Admin base image ready – nginx is listening on :80
+  Axialy Admin base image ready - nginx is listening on :80
