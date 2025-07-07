@@ -1,53 +1,75 @@
+/* ──────────────────────────────────────────────────────────────
+ *  Variables for the Axialy Admin droplet module
+ * ──────────────────────────────────────────────────────────── */
+
 variable "do_token" {
-  type = string
-}
-
-variable "ssh_key_name" {
-  type = string
-}
-
-# Optional; leave blank if you don’t need it inside the droplet
-variable "ssh_public_key" {
-  type    = string
-  default = ""
+  description = "DigitalOcean API token"
+  type        = string
+  sensitive   = true
 }
 
 variable "droplet_name" {
-  type = string
+  description = "Name for the droplet"
+  type        = string
 }
 
 variable "region" {
-  type    = string
-  default = "sfo3"
+  description = "DigitalOcean region where the droplet will be created"
+  type        = string
+  default     = "nyc3"
 }
 
-variable "size" {
-  type    = string
-  default = "s-1vcpu-2gb"
+variable "droplet_size" {
+  description = "Size of the droplet (e.g., s-1vcpu-1gb, s-1vcpu-2gb)"
+  type        = string
+  default     = "s-1vcpu-2gb"
 }
 
-variable "repo_url" {
-  type = string
+variable "ssh_key_fingerprint" {
+  description = "SSH key fingerprint to add to the droplet"
+  type        = string
 }
 
-# ── DB credentials ────────────────────────────────────────────────
-variable "db_host" { type = string }
-variable "db_port" { type = string }
-variable "db_user" { type = string }
-variable "db_pass" { type = string }
+# Database connection variables
+variable "db_host" {
+  description = "Database host"
+  type        = string
+  sensitive   = true
+}
 
-# ── first-time admin user ─────────────────────────────────────────
+variable "db_port" {
+  description = "Database port"
+  type        = string
+  default     = "25060"
+}
+
+variable "db_user" {
+  description = "Database user"
+  type        = string
+  sensitive   = true
+}
+
+variable "db_password" {
+  description = "Database password"
+  type        = string
+  sensitive   = true
+}
+
+# Admin defaults
 variable "admin_default_user" {
-  type    = string
-  default = ""
+  description = "Default admin username"
+  type        = string
+  sensitive   = true
 }
 
 variable "admin_default_email" {
-  type    = string
-  default = ""
+  description = "Default admin email"
+  type        = string
+  sensitive   = true
 }
 
 variable "admin_default_password" {
-  type    = string
-  default = ""
+  description = "Default admin password"
+  type        = string
+  sensitive   = true
 }
