@@ -68,10 +68,6 @@ jobs:
           echo "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           
-          # Set up SSH agent and add key with passphrase
-          eval "$(ssh-agent -s)"
-          echo "${{ secrets.DROPLET_SSH_PASSPHRASE }}" | ssh-add ~/.ssh/deploy_key
-          
           # Add droplet to known hosts
           ssh-keyscan -H ${{ steps.tfout.outputs.droplet_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
       
