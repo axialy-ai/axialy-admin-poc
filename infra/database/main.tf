@@ -1,6 +1,5 @@
 terraform {
   required_version = ">= 1.6.0"
-
   required_providers {
     digitalocean = {
       source  = "digitalocean/digitalocean"
@@ -36,7 +35,6 @@ resource "digitalocean_database_db" "admin" {
 resource "digitalocean_database_db" "ui" {
   cluster_id = digitalocean_database_cluster.axialy.id
   name       = "axialy_ui"
-
   # Ensure this runs after the admin DB to avoid
   # two concurrent DB-create calls on a brand-new cluster.
   depends_on = [digitalocean_database_db.admin]
@@ -49,21 +47,10 @@ resource "digitalocean_database_db" "ui" {
 resource "digitalocean_database_user" "axialy_admin" {
   cluster_id = digitalocean_database_cluster.axialy.id
   name       = "axialy_admin"
-
   depends_on = [
     digitalocean_database_db.admin,
     digitalocean_database_db.ui
   ]
 }
 
-/* ──────────────────────────────────────────────────────────────
- *  Outputs consumed by the GitHub Actions workflow
- * ──────────────────────────────────────────────────────────── */
-output "db_host" { value = digitalocean_database_cluster.axialy.host }
-output "db_port" { value = digitalocean_database_cluster.axialy.port }
-output "db_user" { value = digitalocean_database_user.axialy_admin.name }
-
-output "db_pass" {
-  value     = digitalocean_database_user.axialy_admin.password
-  sensitive = true
-}
+# OUTPUTS ARE NOW IN outputs.tf FILE - DO NOT DUPLICATE HERE
