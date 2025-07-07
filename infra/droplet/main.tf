@@ -14,21 +14,21 @@ provider "digitalocean" {
 }
 
 # --------------------------------------------------------------------
-#  Re-use the key that’s **already** in the DigitalOcean account
+#  Re-use the key that’s already in the DigitalOcean account
 # --------------------------------------------------------------------
 data "digitalocean_ssh_key" "default" {
-  fingerprint = var.ssh_fingerprint
+  name = var.ssh_key_name
 }
 
 # --------------------------------------------------------------------
 #  Admin Droplet
 # --------------------------------------------------------------------
 resource "digitalocean_droplet" "admin" {
-  name              = var.droplet_name
-  region            = var.region
-  size              = var.size
-  image             = "ubuntu-24-04-x64"
-  ssh_keys          = [data.digitalocean_ssh_key.default.id]
+  name     = var.droplet_name
+  region   = var.region
+  size     = var.size
+  image    = "ubuntu-24-04-x64"
+  ssh_keys = [data.digitalocean_ssh_key.default.id]
 
   user_data = templatefile("${path.module}/cloud-init.yaml", {
     repo_url               = var.repo_url
