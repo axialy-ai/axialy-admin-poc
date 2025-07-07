@@ -60,48 +60,71 @@ jobs:
       - name: Wait for droplet to be ready
         run: |
           echo "Waiting for droplet to be ready..."
-          sleep 30
+          # Wait longer for cloud-init to complete
+          sleep 60
       
-      - name: Configure SSH key
+      - name: Configure SSH and Deploy
+        env:
+          DROPLET_IP: ${{ steps.tfout.outputs.droplet_ip }}
         run: |
+          # Setup SSH directory
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          
+          # Write SSH key
           echo "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           
           # Add droplet to known hosts
-          ssh-keyscan -H ${{ steps.tfout.outputs.droplet_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
-      
-      - name: Deploy application
-        env:
-          DROPLET_IP: ${{ steps.tfout.outputs.droplet_ip }}
-          SSH_KEY_PATH: ~/.ssh/deploy_key
-          SSHPASS: ${{ secrets.DROPLET_SSH_PASSPHRASE }}
-        run: |
-          # Install sshpass for passphrase handling
-          sudo apt-get update && sudo apt-get install -y sshpass
+          ssh-keyscan -H $DROPLET_IP >> ~/.ssh/known_hosts 2>/dev/null || true
+          
+          # Install expect for passphrase handling
+          sudo apt-get update && sudo apt-get install -y expect
+          
+          # Create expect script for SSH with passphrase
+          cat > ssh_with_pass.exp << 'EOF'
+          #!/usr/bin/expect -f
+          set timeout 300
+          set ssh_key [lindex $argv 0]
+          set host [lindex $argv 1]
+          set passphrase [lindex $argv 2]
+          set command [lindex $argv 3]
+          
+          spawn ssh -i $ssh_key -o StrictHostKeyChecking=no root@$host $command
+          expect {
+            "Enter passphrase for key*" {
+              send "$passphrase\r"
+              exp_continue
+            }
+            eof
+          }
+          EOF
+          chmod +x ssh_with_pass.exp
           
           # Create deployment script
-          cat > deploy.sh << 'EOF'
+          cat > deploy.sh << 'DEPLOY_SCRIPT'
           #!/bin/bash
           set -e
           
           echo "Setting up Axialy Admin application..."
           
-          # Update system packages
-          sudo apt-get update
-          sudo apt-get install -y nginx php8.1-fpm php8.1-mysql php8.1-mbstring \
-            php8.1-xml php8.1-curl php8.1-zip php8.1-gd git
+          # Wait for apt to be available
+          while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+            echo "Waiting for apt to be available..."
+            sleep 5
+          done
+          
+          # Update and install packages
+          apt-get update
+          apt-get install -y nginx php8.1-fpm php8.1-mysql php8.1-mbstring \
+            php8.1-xml php8.1-curl php8.1-zip php8.1-gd
           
           # Configure PHP
-          sudo sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
-          sudo systemctl restart php8.1-fpm
-          
-          # Create web directory
-          sudo mkdir -p /var/www/axialy-admin
-          sudo chown -R www-data:www-data /var/www/axialy-admin
+          sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
+          systemctl restart php8.1-fpm
           
           # Configure Nginx
-          sudo tee /etc/nginx/sites-available/axialy-admin > /dev/null << 'NGINX'
+          cat > /etc/nginx/sites-available/axialy-admin << 'NGINX_CONF'
           server {
               listen 80 default_server;
               listen [::]:80 default_server;
@@ -112,14 +135,12 @@ jobs:
               server_name _;
               
               location / {
-                  try_files \$uri \$uri/ /index.php?\$query_string;
+                  try_files $uri $uri/ /index.php?$query_string;
               }
               
               location ~ \.php$ {
                   include snippets/fastcgi-php.conf;
                   fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
-                  fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-                  include fastcgi_params;
               }
               
               location ~ /\.ht {
@@ -135,46 +156,60 @@ jobs:
               add_header X-Content-Type-Options "nosniff" always;
               add_header X-XSS-Protection "1; mode=block" always;
           }
-          NGINX
+          NGINX_CONF
           
           # Enable site
-          sudo ln -sf /etc/nginx/sites-available/axialy-admin /etc/nginx/sites-enabled/
-          sudo rm -f /etc/nginx/sites-enabled/default
-          sudo nginx -t
-          sudo systemctl restart nginx
+          ln -sf /etc/nginx/sites-available/axialy-admin /etc/nginx/sites-enabled/
+          rm -f /etc/nginx/sites-enabled/default
+          nginx -t
+          systemctl restart nginx
           
-          echo "Nginx configured successfully!"
-          EOF
+          echo "Setup completed!"
+          DEPLOY_SCRIPT
           
-          # Define SSH command with passphrase
-          SSH_CMD="sshpass -e ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no"
-          SCP_CMD="sshpass -e scp -i $SSH_KEY_PATH -o StrictHostKeyChecking=no"
+          # Copy deployment script to droplet
+          ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "cat > /tmp/deploy.sh" < deploy.sh
+          ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "chmod +x /tmp/deploy.sh"
           
-          # Copy and execute deployment script
-          $SCP_CMD deploy.sh root@$DROPLET_IP:/tmp/
-          $SSH_CMD root@$DROPLET_IP "bash /tmp/deploy.sh"
+          # Execute deployment script
+          echo "Running deployment script on droplet..."
+          ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "bash /tmp/deploy.sh"
           
           # Deploy application files
           echo "Deploying application files..."
           
-          # Create temporary directory for deployment
-          mkdir -p /tmp/axialy-admin-deploy
-          cp -r axialy-admin-product/* /tmp/axialy-admin-deploy/
+          # Create tar archive of application
+          cd axialy-admin-product
+          tar -czf /tmp/axialy-admin.tar.gz .
+          cd ..
           
-          # Deploy via rsync with sshpass
-          sshpass -e rsync -avz --delete \
-            -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" \
-            /tmp/axialy-admin-deploy/ \
-            root@$DROPLET_IP:/var/www/axialy-admin/
+          # Copy application archive to droplet
+          cat > scp_with_pass.exp << 'EOF'
+          #!/usr/bin/expect -f
+          set timeout 300
+          set ssh_key [lindex $argv 0]
+          set source [lindex $argv 1]
+          set dest [lindex $argv 2]
+          set passphrase [lindex $argv 3]
           
-          # Set proper permissions and create environment file
-          $SSH_CMD root@$DROPLET_IP << 'REMOTE_EOF'
-          chown -R www-data:www-data /var/www/axialy-admin
-          find /var/www/axialy-admin -type d -exec chmod 755 {} \;
-          find /var/www/axialy-admin -type f -exec chmod 644 {} \;
+          spawn scp -i $ssh_key -o StrictHostKeyChecking=no $source $dest
+          expect {
+            "Enter passphrase for key*" {
+              send "$passphrase\r"
+              exp_continue
+            }
+            eof
+          }
+          EOF
+          chmod +x scp_with_pass.exp
           
-          # Create environment file with database credentials
-          cat > /var/www/axialy-admin/.env << ENV_EOF
+          ./scp_with_pass.exp ~/.ssh/deploy_key /tmp/axialy-admin.tar.gz root@$DROPLET_IP:/tmp/ "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
+          
+          # Extract and set permissions
+          ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "cd /var/www/axialy-admin && tar -xzf /tmp/axialy-admin.tar.gz && chown -R www-data:www-data /var/www/axialy-admin && find /var/www/axialy-admin -type d -exec chmod 755 {} \; && find /var/www/axialy-admin -type f -exec chmod 644 {} \;"
+          
+          # Create environment file
+          cat > env_file << ENV_EOF
           # Axialy Admin Database
           DB_HOST=${{ secrets.DB_HOST }}
           DB_PORT=${{ secrets.DB_PORT }}
@@ -195,18 +230,26 @@ jobs:
           ADMIN_DEFAULT_PASSWORD=${{ secrets.ADMIN_DEFAULT_PASSWORD }}
           ENV_EOF
           
-          chmod 640 /var/www/axialy-admin/.env
-          chown www-data:www-data /var/www/axialy-admin/.env
+          # Copy environment file
+          ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "cat > /var/www/axialy-admin/.env" < env_file
+          ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "chmod 640 /var/www/axialy-admin/.env && chown www-data:www-data /var/www/axialy-admin/.env"
           
           # Restart services
-          systemctl restart php8.1-fpm nginx
-          
-          echo "Application deployed successfully!"
-          REMOTE_EOF
+          ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "systemctl restart php8.1-fpm nginx"
           
           # Cleanup
-          rm -rf /tmp/axialy-admin-deploy
-          rm -f deploy.sh
+          rm -f deploy.sh ssh_with_pass.exp scp_with_pass.exp env_file /tmp/axialy-admin.tar.gz
+      
+      - name: Verify deployment
+        run: |
+          echo "Testing deployment..."
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://${{ steps.tfout.outputs.droplet_ip }}/admin_login.php || echo "000")
+          
+          if [ "$RESPONSE" = "200" ]; then
+            echo "✅ Deployment successful! Application is responding."
+          else
+            echo "⚠️  Application may still be initializing. HTTP response code: $RESPONSE"
+          fi
       
       - name: Display deployment info
         run: |
@@ -215,7 +258,7 @@ jobs:
           echo "========================================"
           echo ""
           echo "Access your application at:"
-          echo "http://${{ steps.tfout.outputs.droplet_ip }}"
+          echo "http://${{ steps.tfout.outputs.droplet_ip }}/admin_login.php"
           echo ""
           echo "Droplet Details:"
           echo "- Name: ${{ github.event.inputs.droplet_name }}"
