@@ -91,3 +91,13 @@ resource "digitalocean_firewall" "axialy_admin" {
     destination_addresses = ["0.0.0.0/0", "::/0"]
   }
 }
+
+resource "null_resource" "debug" {
+  depends_on = [
+    digitalocean_droplet.axialy_admin,
+    digitalocean_firewall.axialy_admin
+  ]
+  provisioner "local-exec" {
+    command = "echo Droplet and firewall have been created successfully"
+  }
+}
