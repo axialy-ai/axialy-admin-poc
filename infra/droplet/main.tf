@@ -3,7 +3,7 @@ terraform {
   required_providers {
     digitalocean = {
       source  = "digitalocean/digitalocean"
-      version = ">= 2.36.0"
+      version = ">= 2.36"
     }
   }
 }
@@ -12,36 +12,79 @@ provider "digitalocean" {
   token = var.do_token
 }
 
-# Data source to get the SSH key
-data "digitalocean_ssh_key" "this" {
-  name = var.ssh_key_name
-}
-
-# The Axialy Admin droplet
-resource "digitalocean_droplet" "admin" {
-  name   = var.droplet_name
-  region = var.region
-  size   = var.size
-  image  = "ubuntu-24-04-x64"
+/* ──────────────────────────────────────────────────────────────
+ *  Droplet for Axialy Admin
+ * ──────────────────────────────────────────────────────────── */
+resource "digitalocean_droplet" "axialy_admin" {
+  name     = var.droplet_name
+  region   = var.region
+  size     = var.droplet_size
+  image    = "ubuntu-22-04-x64"
   
-  ssh_keys   = [data.digitalocean_ssh_key.this.id]
-  ipv6       = false
+  ssh_keys = [var.ssh_key_fingerprint]
+  
+  # Enable monitoring and backups for production use
   monitoring = true
-  backups    = false
+  backups    = false  # Enable this for production
   
-  # Use the template file to generate user_data
-  user_data = templatefile("${path.module}/user_data.tpl", {
-    repo_url               = var.repo_url
+  # User data to set up environment variables
+  user_data = templatefile("${path.module}/cloud-init.yaml", {
     db_host                = var.db_host
     db_port                = var.db_port
     db_user                = var.db_user
-    db_pass                = var.db_pass
+    db_password            = var.db_password
     admin_default_user     = var.admin_default_user
     admin_default_email    = var.admin_default_email
     admin_default_password = var.admin_default_password
   })
   
-  lifecycle {
-    create_before_destroy = true
+  tags = ["axialy", "admin", "web"]
+}
+
+/* ──────────────────────────────────────────────────────────────
+ *  Firewall rules
+ * ──────────────────────────────────────────────────────────── */
+resource "digitalocean_firewall" "axialy_admin" {
+  name = "axialy-admin-firewall"
+  
+  droplet_ids = [digitalocean_droplet.axialy_admin.id]
+  
+  # Allow SSH
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "22"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  
+  # Allow HTTP
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "80"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  
+  # Allow HTTPS
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "443"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  
+  # Allow all outbound traffic
+  outbound_rule {
+    protocol              = "tcp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  
+  outbound_rule {
+    protocol              = "udp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  
+  outbound_rule {
+    protocol              = "icmp"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
   }
 }
