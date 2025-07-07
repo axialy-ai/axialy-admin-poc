@@ -1,23 +1,75 @@
 #cloud-config
+### ---------------------------------------------------------------------------
+###  Base packages & users
+### ---------------------------------------------------------------------------
 package_update: true
 package_upgrade: true
+packages:
+  - docker.io
+  - docker-compose
+  - nginx
 
+groups:
+  - docker
+
+users:
+  - name: ubuntu
+    groups: docker
+    shell: /bin/bash
+
+### ---------------------------------------------------------------------------
+###  Write application .env from Terraform variables
+### ---------------------------------------------------------------------------
 write_files:
-  - path: /etc/myapp/.env
-    owner: root:root
-    permissions: "0600"
+  - path: /home/ubuntu/app/.env
+    owner: ubuntu:ubuntu
+    permissions: '0644'
     content: |
-      DB_HOST=${db_host}
-      DB_PORT=${db_port}
-      DB_USER=${db_user}
-      DB_PASS=${db_pass}
+      # ------- DB ---------
+      DATABASE_HOST=${db_host}
+      DATABASE_PORT=${db_port}
+      DATABASE_USER=${db_user}
+      DATABASE_PASSWORD=${db_pass}
+      # ------- First-time admin ---------
       ADMIN_DEFAULT_USER=${admin_default_user}
       ADMIN_DEFAULT_EMAIL=${admin_default_email}
       ADMIN_DEFAULT_PASSWORD=${admin_default_password}
 
+  # Nginx reverse-proxy (port-80 → app_port; change 5173 if needed)
+  - path: /etc/nginx/sites-available/admin.conf
+    content: |
+      server {
+        listen 80 default_server;
+        listen [::]:80 default_server;
+        server_name _;
+        location / {
+          proxy_pass http://localhost:5173;
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection "upgrade";
+          proxy_set_header Host $host;
+          proxy_cache_bypass $http_upgrade;
+        }
+      }
+
+### ---------------------------------------------------------------------------
+###  Cloud-init commands
+### ---------------------------------------------------------------------------
 runcmd:
-  - apt-get update
-  - apt-get install -y git docker.io
-  - git clone ${repo_url} /opt/myapp
-  - chmod +x /opt/myapp/deploy.sh
-  - /opt/myapp/deploy.sh
+  # Enable the new Nginx vhost
+  - ln -sf /etc/nginx/sites-available/admin.conf /etc/nginx/sites-enabled/admin.conf
+  - rm -f /etc/nginx/sites-enabled/default
+  - systemctl restart nginx
+
+  # Clone the repo as ubuntu and start the stack
+  - su - ubuntu -c "git clone ${repo_url} /home/ubuntu/app"
+  - su - ubuntu -c "cd /home/ubuntu/app && docker compose pull"
+  - su - ubuntu -c "cd /home/ubuntu/app && docker compose up -d"
+
+  # Make sure the compose stack auto-starts on reboot
+  - su - ubuntu -c "docker update --restart=unless-stopped \$(docker compose -f /home/ubuntu/app/docker-compose.yml ps -q)"
+
+final_message: |
+  Axialy-Admin deployment complete.
+  The Web UI will be available at http://$(curl -s http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address)
+
