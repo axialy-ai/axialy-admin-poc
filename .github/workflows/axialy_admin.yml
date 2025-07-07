@@ -6,7 +6,7 @@ on:
       droplet_name:
         description: "Droplet hostname"
         required: true
-        default: "axialy-admin-prod"
+        default: "axialy-admin-ui"
       region:
         description: "DO region (e.g. nyc3, sfo3, fra1)"
         default: sfo3
