@@ -1,68 +1,61 @@
 #cloud-config
-###############################################################################
-# 0.  Base OS preparation
-###############################################################################
 package_update: true
 package_upgrade: true
 packages:
-  - docker.io
-  - docker-compose-plugin
   - nginx
+  - php8.1-fpm
+  - php8.1-mysql
+  - php8.1-mbstring
+  - php8.1-xml
+  - php8.1-curl
+  - php8.1-zip
+  - php8.1-gd
   - git
+  - ufw
 
-###############################################################################
-# 1.  Runtime secrets for the containers
-###############################################################################
 write_files:
-  # ── .env consumed by the app ──────────────────────────────────────────────
-  - path: /home/ubuntu/app/.env
-    owner: ubuntu:ubuntu
-    permissions: "0600"
+  - path: /etc/environment
     content: |
-      DB_HOST=${db_host}
-      DB_PORT=${db_port}
-      DB_USER=${db_user}
-      DB_PASS=${db_pass}
-      ADMIN_DEFAULT_USER=${admin_default_user}
-      ADMIN_DEFAULT_EMAIL=${admin_default_email}
-      ADMIN_DEFAULT_PASSWORD=${admin_default_password}
+      DB_HOST="${db_host}"
+      DB_PORT="${db_port}"
+      DB_USER="${db_user}"
+      DB_PASSWORD="${db_password}"
+      DB_NAME="axialy_admin"
+      UI_DB_HOST="${db_host}"
+      UI_DB_PORT="${db_port}"
+      UI_DB_USER="${db_user}"
+      UI_DB_PASSWORD="${db_password}"
+      UI_DB_NAME="axialy_ui"
+      ADMIN_DEFAULT_USER="${admin_default_user}"
+      ADMIN_DEFAULT_EMAIL="${admin_default_email}"
+      ADMIN_DEFAULT_PASSWORD="${admin_default_password}"
+    append: true
 
-  # ── nginx reverse-proxy :80 → :5173 (Vite/React) ─────────────────────────
-  - path: /etc/nginx/sites-available/admin.conf
-    permissions: "0644"
-    content: |
-      server {
-        listen 80 default_server;
-        listen [::]:80 default_server;
-        server_name _;
-        location / {
-          proxy_pass         http://127.0.0.1:5173;
-          proxy_http_version 1.1;
-          proxy_set_header   Upgrade $http_upgrade;
-          proxy_set_header   Connection "upgrade";
-          proxy_set_header   Host $host;
-        }
-      }
-
-###############################################################################
-# 2.  One-shot bootstrap
-###############################################################################
 runcmd:
-  # 2-1 Docker & nginx ready
-  - systemctl enable --now docker
-  - rm -f /etc/nginx/sites-enabled/default
-  - ln -sf /etc/nginx/sites-available/admin.conf /etc/nginx/sites-enabled/admin.conf
-  - systemctl restart nginx
-
-  # 2-2 Clone repo & start stack (token-less HTTPS because the droplet’s SSH key
-  #     already has access; adjust to SSH clone if you prefer).
-  - "su - ubuntu -c 'git clone ${repo_url} /home/ubuntu/app || (cd /home/ubuntu/app && git pull)'"
-  - "su - ubuntu -c 'cd /home/ubuntu/app && docker compose pull --quiet || true'"
-  - "su - ubuntu -c 'cd /home/ubuntu/app && docker compose up -d --remove-orphans'"
-  - "su - ubuntu -c \"docker update --restart=unless-stopped $(docker compose -f /home/ubuntu/app/docker-compose.yml ps -q)\""
-
-###############################################################################
-# 3.  Finish line
-###############################################################################
-final_message: |
-  ✅  Axialy Admin deployed – nginx is forwarding :80 → :5173
+  # Configure firewall
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+  
+  # Configure PHP
+  - sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
+  - systemctl restart php8.1-fpm
+  
+  # Create web directory
+  - mkdir -p /var/www/axialy-admin
+  - chown -R www-data:www-data /var/www/axialy-admin
+  
+  # Create a placeholder index.php
+  - |
+    cat > /var/www/axialy-admin/index.php << 'EOF'
+    <?php
+    echo "<h1>Axialy Admin - Deployment in Progress</h1>";
+    echo "<p>The application will be deployed shortly...</p>";
+    echo "<p>Server Time: " . date('Y-m-d H:i:s') . "</p>";
+    phpinfo();
+    EOF
+  
+  # Set permissions
+  - chown www-data:www-data /var/www/axialy-admin/index.php
+  - chmod 644 /var/www/axialy-admin/index.php
