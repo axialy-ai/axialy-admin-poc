@@ -1,26 +1,32 @@
 #cloud-config
 ###############################################################################
-# 0. Base OS packages
+# 0. OS & package installation (robust “apt” form)
 ###############################################################################
 package_update: true
 package_upgrade: true
-packages:
-  # Docker engine
-  - docker.io
-  # Docker Compose v2 (the “docker compose” sub-command lives in this plugin)
-  - docker-compose-plugin
-  # Reverse-proxy
-  - nginx
-  # Convenience tools
-  - git
-  - curl
+
+runcmd:
+  # 0-1. Wait for cloud-init’s apt-daemon lock to clear
+  - |
+    while sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
+          sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+      echo "🕒 Waiting for apt locks…"
+      sleep 2
+    done
+  # 0-2. Install everything we need in one go
+  - |
+    apt-get update -y && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        docker.io docker-compose-plugin nginx git curl
+  # 0-3. Make sure docker & nginx always run
+  - systemctl enable --now docker
+  - systemctl enable --now nginx
 
 ###############################################################################
 # 1. Users / groups
 ###############################################################################
 groups:
   - docker
-
 users:
   - default
   - name: ubuntu
@@ -28,30 +34,31 @@ users:
     shell: /bin/bash
 
 ###############################################################################
-# 2.  Secrets and environment expected by docker-compose
+# 2.  Environment file for docker-compose (left exactly as before)
 ###############################################################################
 write_files:
   - path: /home/ubuntu/app/.env
     owner: ubuntu:ubuntu
     permissions: '0600'
     content: |
-      # ----------------- DB -----------------
       DATABASE_HOST=${db_host}
       DATABASE_PORT=${db_port}
       DATABASE_USER=${db_user}
       DATABASE_PASSWORD=${db_pass}
-      # ------------- First-time admin -------
       ADMIN_DEFAULT_USER=${admin_default_user}
       ADMIN_DEFAULT_EMAIL=${admin_default_email}
       ADMIN_DEFAULT_PASSWORD=${admin_default_password}
 
-  # Nginx vhost -> proxy port 5173 (adjust if your UI container uses a different port)
+###############################################################################
+# 3.  Nginx configuration – enable **immediately**
+###############################################################################
   - path: /etc/nginx/sites-available/admin.conf
     content: |
       server {
         listen 80 default_server;
         listen [::]:80 default_server;
         server_name _;
+        # If the UI isn’t up yet users will get 502 (better than ERR_REFUSED)
         location / {
           proxy_pass http://127.0.0.1:5173;
           proxy_http_version 1.1;
@@ -61,29 +68,19 @@ write_files:
         }
       }
 
-###############################################################################
-# 3. Cloud-init commands (executed once on first boot)
-###############################################################################
 runcmd:
-  # 3-1. Enable and start system services
-  - systemctl enable --now docker
-  - systemctl enable --now nginx
-
-  # 3-2. Enable our Nginx vhost
+  # 3-1. Activate our vhost & restart nginx right away
   - ln -sf /etc/nginx/sites-available/admin.conf /etc/nginx/sites-enabled/admin.conf
   - rm -f /etc/nginx/sites-enabled/default
   - systemctl reload nginx
-
-  # 3-3. Pull & run Axialy-Admin with Docker Compose (as the ubuntu user)
+  # 3-2. Pull & run the Admin stack (same as before)
   - su - ubuntu -c "git clone --depth 1 ${repo_url} /home/ubuntu/app"
   - su - ubuntu -c "cd /home/ubuntu/app && docker compose pull"
   - su - ubuntu -c "cd /home/ubuntu/app && docker compose up -d"
-
-  # 3-4. Make the stack survive reboots
   - su - ubuntu -c "docker update --restart=unless-stopped $(docker compose -f /home/ubuntu/app/docker-compose.yml ps -q)"
 
 ###############################################################################
-# 4. Friendly last line in /var/log/cloud-init-output.log
+# 4. Cloud-init epilogue
 ###############################################################################
 final_message: |
-  🔹 Axialy-Admin deployed.  Visit: http://$(curl -s http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address) 🔹
+  ✅ Base services online. Browse http://$(curl -s http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address)
