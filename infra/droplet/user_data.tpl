@@ -1,15 +1,16 @@
+── infra/droplet/user_data.tpl ──
 #cloud-config
 package_update: true
 package_upgrade: true
 packages:
   - nginx
-  - php-fpm
+  - php-fpm          # meta-package; brings in php8.x-fpm on Ubuntu 24.04
   - php-mysql
   - git
   - unzip
 
 write_files:
-  # ── .env for the PHP app ─────────────────────────────────────────────
+  # .env consumed by the PHP app ------------------------------------------------
   - path: /var/www/axialy-admin/.env
     owner: www-data:www-data
     permissions: '0600'
@@ -30,22 +31,20 @@ write_files:
       ADMIN_DEFAULT_EMAIL=${admin_default_email}
       ADMIN_DEFAULT_PASSWORD=${admin_default_password}
 
-  # ── bootstrap script ────────────────────────────────────────────────
+  # bootstrap script -----------------------------------------------------------
   - path: /usr/local/bin/deploy_axialy_admin.sh
     permissions: '0755'
     content: |
       #!/usr/bin/env bash
       set -Eeuo pipefail
 
-      # 1) clone or pull repo
       install -d -o www-data -g www-data /var/www/axialy-admin
       if [ ! -d /var/www/axialy-admin/.git ]; then
         sudo -u www-data git clone --depth 1 ${repo_url} /var/www/axialy-admin
       else
-        sudo -u www-data git -C /var/www/axialy-admin pull
+        sudo -u www-data git -C /var/www/axialy-admin pull --ff-only
       fi
 
-      # 2) vhost
       cat >/etc/nginx/sites-available/axialy_admin <<'NGINX'
       server {
         listen 80 default_server;
@@ -65,8 +64,11 @@ write_files:
       NGINX
 
       ln -sf /etc/nginx/sites-available/axialy_admin /etc/nginx/sites-enabled/axialy_admin
-      rm -f  /etc/nginx/sites-enabled/default
-      systemctl enable --now nginx
+      rm -f /etc/nginx/sites-enabled/default
+      systemctl reload nginx
 
 runcmd:
-  - [ bash, /usr/local/bin/deploy_axialy_admin.sh ]
+  - bash /usr/local/bin/deploy_axialy_admin.sh
+
+final_message: |
+  Axialy Admin deployed – nginx is serving on port 80
