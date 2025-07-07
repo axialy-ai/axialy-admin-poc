@@ -18,39 +18,81 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TF_VAR_do_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
-
+    
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: hashicorp/setup-terraform@v3
-        with: { terraform_version: 1.6.6 }
-
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+          terraform_wrapper: false  # Important for capturing outputs
+      
       - name: Terraform init
         working-directory: infra/database
         run: terraform init -input=false
-
+      
       - name: Terraform apply
-        id: tfout                       # ← capture outputs here
+        id: tfout
         working-directory: infra/database
         run: |
-          terraform apply -auto-approve \
+          terraform apply -auto-approve -input=false \
             -var="db_cluster_name=${{ github.event.inputs.db_cluster_name }}" \
             -var="region=${{ github.event.inputs.region }}" \
             -var="db_size=${{ github.event.inputs.size }}"
-
-          # Export outputs to $GITHUB_OUTPUT (new syntax)
-          terraform output -json > tf.json
-          echo "db_host=$(jq -r .db_host.value tf.json)" >> "$GITHUB_OUTPUT"
-          echo "db_port=$(jq -r .db_port.value tf.json)" >> "$GITHUB_OUTPUT"
-          echo "db_user=$(jq -r .db_user.value tf.json)" >> "$GITHUB_OUTPUT"
-          echo "db_pass=$(jq -r .db_pass.value tf.json)" >> "$GITHUB_OUTPUT"
-
-      - name: Save DB creds as repo secrets
+          
+          # Export outputs to GITHUB_OUTPUT
+          echo "db_host=$(terraform output -raw db_host)" >> "$GITHUB_OUTPUT"
+          echo "db_port=$(terraform output -raw db_port)" >> "$GITHUB_OUTPUT"
+          echo "db_user=$(terraform output -raw db_user)" >> "$GITHUB_OUTPUT"
+          echo "db_pass=$(terraform output -raw db_pass)" >> "$GITHUB_OUTPUT"
+      
+      - name: Verify outputs
+        run: |
+          echo "Database cluster created successfully!"
+          echo "Host: ${{ steps.tfout.outputs.db_host }}"
+          echo "Port: ${{ steps.tfout.outputs.db_port }}"
+          echo "User: ${{ steps.tfout.outputs.db_user }}"
+          echo "Password: [hidden]"
+      
+      - name: Save DB credentials as repo secrets
         if: success()
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
+          # Check if GH_PAT is set
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::GH_PAT secret not set. Cannot update repository secrets automatically."
+            echo "Please manually add the following secrets to your repository:"
+            echo "  DB_HOST: ${{ steps.tfout.outputs.db_host }}"
+            echo "  DB_PORT: ${{ steps.tfout.outputs.db_port }}"
+            echo "  DB_USER: ${{ steps.tfout.outputs.db_user }}"
+            echo "  DB_PASSWORD: [check Terraform state]"
+            exit 0
+          fi
+          
+          # Update repository secrets
           gh secret set DB_HOST     --body "${{ steps.tfout.outputs.db_host }}"
           gh secret set DB_PORT     --body "${{ steps.tfout.outputs.db_port }}"
           gh secret set DB_USER     --body "${{ steps.tfout.outputs.db_user }}"
           gh secret set DB_PASSWORD --body "${{ steps.tfout.outputs.db_pass }}"
+          
+          echo "✓ Repository secrets updated successfully!"
+      
+      - name: Display next steps
+        run: |
+          echo "========================================"
+          echo "Database cluster deployed successfully!"
+          echo "========================================"
+          echo ""
+          echo "Next steps:"
+          echo "1. The database credentials have been saved as repository secrets"
+          echo "2. You can now run the 'Axialy Admin Droplet' workflow"
+          echo "3. The droplet will automatically connect to this database"
+          echo ""
+          echo "Database details:"
+          echo "- Cluster: ${{ github.event.inputs.db_cluster_name }}"
+          echo "- Region: ${{ github.event.inputs.region }}"
+          echo "- Size: ${{ github.event.inputs.size }}"
+          echo "========================================"
