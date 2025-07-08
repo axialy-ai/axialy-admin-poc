@@ -1,107 +1,66 @@
 #cloud-config
-package_update: true
-package_upgrade: true
-packages:
-  - nginx
-  - php-fpm
-  - php-mysql
-  - php-mbstring
-  - php-xml
-  - php-zip
-  - php-curl
-  - git
-  - unzip
-  - mariadb-client
-
+#
+#  Axialy admin / UI – droplet bootstrap
+#  ------------------------------------------------------------
+#  • Installs the *matching* PHP-FPM version
+#  • Drops an nginx vhost that uses that socket
+#  • Enables & starts everything
+#
 write_files:
-  # ───────── nginx vhost ─────────
-  - path: /etc/nginx/sites-available/axialy_admin
+  - path: /etc/apt/apt.conf.d/99noninteractive
+    permissions: "0644"
+    content: |
+      APT::Get::Assume-Yes "true";
+      APT::Get::Force-Yes "true";
+      DPkg::Options {
+        "--force-confdef";
+        "--force-confold";
+      }
+
+  - path: /etc/nginx/sites-available/axialy-admin.conf
     permissions: "0644"
     content: |
       server {
-        listen 80 default_server;
-        listen [::]:80 default_server;
-        server_name _;
-        root /var/www/axialy-admin;                # ← new — no sub-folder
-        index index.php index.html;
+          listen 80 default_server;
+          listen [::]:80 default_server;
+          server_name _;
+          root /var/www/axialy-admin;
 
-        client_max_body_size 50M;
+          index index.php;
+          client_max_body_size 16M;
 
-        location / {
-          try_files $uri $uri/ /index.php?$query_string;
-        }
+          location / {
+              try_files $uri $uri/ /index.php?$query_string;
+          }
 
-        location ~ \.php$ {
-          include snippets/fastcgi-php.conf;
-          fastcgi_pass unix:/run/php/php8.3-fpm.sock;
-          fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-          include fastcgi_params;
-        }
+          location ~ \.php$ {
+              include               fastcgi_params;
+              fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_pass          unix:/run/php/php8.3-fpm.sock;
+          }
 
-        location ~ /\. { deny all; }
-        location ~ /\.env { deny all; }
+          location ~* \.(jpg|jpeg|png|gif|ico|css|js)$ {
+              expires 30d;
+              access_log off;
+          }
       }
 
-  # ───────── runtime secrets (.env) ─────────
-  - path: /tmp/axialy-admin.env
-    permissions: "0600"
-    content: |
-      DB_HOST=${db_host}
-      DB_PORT=${db_port}
-      DB_NAME=axialy_admin
-      DB_USER=${db_user}
-      DB_PASSWORD=${db_pass}
-
-      UI_DB_HOST=${db_host}
-      UI_DB_PORT=${db_port}
-      UI_DB_NAME=axialy_ui
-      UI_DB_USER=${db_user}
-      UI_DB_PASSWORD=${db_pass}
-
-      ADMIN_DEFAULT_USER=${admin_default_user}
-      ADMIN_DEFAULT_EMAIL=${admin_default_email}
-      ADMIN_DEFAULT_PASSWORD=${admin_default_password}
-
 runcmd:
-  # 1. web root
-  - mkdir -p /var/www/axialy-admin
-  - chown -R www-data:www-data /var/www
-
-  # 2. get the code directly *into* the web root
-  - git clone --depth 1 ${repo_url} /var/www/axialy-admin
-
-  # 3. drop .env
-  - mv /tmp/axialy-admin.env /var/www/axialy-admin/.env
-  - chown www-data:www-data /var/www/axialy-admin/.env
-  - chmod 600 /var/www/axialy-admin/.env
-
-  # 4. perms
-  - chown -R www-data:www-data /var/www/axialy-admin
-  - find  /var/www/axialy-admin -type d -exec chmod 755 {} \;
-  - find  /var/www/axialy-admin -type f -exec chmod 644 {} \;
-
-  # 5. enable vhost
-  - ln -sf /etc/nginx/sites-available/axialy_admin /etc/nginx/sites-enabled/
-  - rm -f  /etc/nginx/sites-enabled/default
-  - systemctl restart php8.3-fpm nginx
-
-  # 6. wait for DB & import schemas *once*
+  # 1. base system + php-fpm
   - |
-    for i in {1..30}; do
-      if mysql -h ${db_host} -P ${db_port} -u ${db_user} -p${db_pass} -e "SELECT 1" &>/dev/null; then
-        break
-      fi
-      sleep 5
-    done
+    apt update
+    apt install nginx php8.3-fpm php8.3-mysql
+
+  # 2. enable vhost
   - |
-    if ! mysql -h ${db_host} -P ${db_port} -u ${db_user} -p${db_pass} axialy_admin \
-         -e "SHOW TABLES LIKE 'admin_users'" | grep -q admin_users; then
-      mysql -h ${db_host} -P ${db_port} -u ${db_user} -p${db_pass} axialy_admin \
-        < /var/www/axialy-admin/db/axialy_admin.sql
-    fi
+    ln -sf /etc/nginx/sites-available/axialy-admin.conf \
+          /etc/nginx/sites-enabled/axialy-admin.conf
+    rm -f /etc/nginx/sites-enabled/default
+
+  # 3. make sure the socket directory exists on boot
   - |
-    if ! mysql -h ${db_host} -P ${db_port} -u ${db_user} -p${db_pass} axialy_ui \
-         -e "SHOW TABLES LIKE 'ui_users'" | grep -q ui_users; then
-      mysql -h ${db_host} -P ${db_port} -u ${db_user} -p${db_pass} axialy_ui \
-        < /var/www/axialy-admin/db/axialy_ui.sql
-    fi
+    systemctl enable php8.3-fpm
+    systemctl enable nginx
+    systemctl restart php8.3-fpm
+    nginx -t
+    systemctl restart nginx
