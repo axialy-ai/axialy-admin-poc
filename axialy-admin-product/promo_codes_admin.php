@@ -185,10 +185,10 @@ requireAdminAuth();
   <div id="left-panel" class="expanded">
     <div id="panel-header">
 <!--
-      <img src="https://axialy.com/assets/img/SOI.png" alt="Axialy Logo"/>
+      <img src="https://axiaba.com/assets/img/SOI.png" alt="Axialy Logo"/>
 -->
       <a href="index.php">
-        <img src="https://axialy.com/assets/img/SOI.png" alt="Axialy Logo" style    ="cursor: pointer;"/>
+        <img src="https://axiaba.com/assets/img/SOI.png" alt="Axialy Logo" style    ="cursor: pointer;"/>
       </a>      <h1>Promo Codes</h1>
     </div>
     <div id="promo-list">Loading...</div>
@@ -198,7 +198,7 @@ requireAdminAuth();
   <div id="right-panel">
     <div id="right-header">
       <div id="right-header-left">
-        <img src="https://axialy.com/assets/img/product_logo.png" alt="Axialy Logo"/>
+        <img src="https://axiaba.com/assets/img/product_logo.png" alt="Axialy Logo"/>
         <strong>Promo Codes Management</strong>
       </div>
       <div></div>
