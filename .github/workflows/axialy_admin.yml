@@ -1,0 +1,24 @@
+# .github/workflows/axialy_admin.yml
+name: "Axialy Admin UI"
+
+on:
+  workflow_dispatch:
+    inputs:
+      droplet_name:
+        description: "Droplet hostname"
+        required: true
+        default: "axialy-admin-prod"
+      region:
+        description: "DO region (e.g. nyc3, sfo3, fra1)"
+        default: sfo3
+      size:
+        description: "Droplet size"
+        default: s-1vcpu-2gb
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # 1) Checkout
+      - uses: actions/checkout@v4
+      # … **everything else exactly as you already have it** …
