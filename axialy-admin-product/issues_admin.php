@@ -178,10 +178,10 @@ requireAdminAuth();
   <div id="left-panel" class="expanded">
     <div id="panel-header">
 <!--
-      <img src="https://axialy.com/assets/img/SOI.png" alt="Axialy Logo"/>
+      <img src="https://axiaba.com/assets/img/SOI.png" alt="Axialy Logo"/>
 -->
       <a href="index.php">
-        <img src="https://axialy.com/assets/img/SOI.png" alt="Axialy Logo" style    ="cursor: pointer;"/>
+        <img src="https://axiaba.com/assets/img/SOI.png" alt="Axialy Logo" style    ="cursor: pointer;"/>
       </a>
 
       <h1>Issues</h1>
@@ -196,7 +196,7 @@ requireAdminAuth();
   <div id="right-panel">
     <div id="right-header">
       <div id="right-header-left">
-        <img src="https://axialy.com/assets/img/product_logo.png" alt="Axialy Logo"/>
+        <img src="https://axiaba.com/assets/img/product_logo.png" alt="Axialy Logo"/>
         <strong>Issue Details</strong>
       </div>
       <div></div>
