@@ -15,7 +15,7 @@ on:
 
 jobs:
   apply:
-    runs-on: ubuntu-latest         # ← GitHub-hosted runner
+    runs-on: ubuntu-latest
     env:
       TF_VAR_do_token: ${{ secrets.DO_PAT }}
 
@@ -55,7 +55,7 @@ jobs:
         echo "db_pass=$(terraform output -raw db_pass)" >> "$GITHUB_OUTPUT"
 
     # ─────────────────────────────────────────────────────────
-    # 3) ⚠️ NEW STEP ⚠️  - import baseline schema dumps
+    # 3) Import streamlined schema dumps
     # ─────────────────────────────────────────────────────────
     - name: Load baseline schema dumps
       if: success()
@@ -68,17 +68,39 @@ jobs:
         sudo apt-get update -qq
         sudo apt-get install -y mysql-client
 
-        # DigitalOcean clusters require SSL by default -> --ssl-mode=REQUIRED
+        echo "Waiting for database cluster to be ready..."
+        sleep 30
+
+        # DigitalOcean clusters require SSL by default
         for db in axialy_admin axialy_ui; do
-          echo ">> Importing into $db"
-          mysql --ssl-mode=REQUIRED \
-                --host="${DB_HOST}" --port="${DB_PORT}" \
-                --user="${DB_USER}" --password="${DB_PASS}" "${db}" < "db/${db}.sql"
+          echo ">> Importing schema into $db"
+          max_retries=3
+          retry_count=0
+          
+          while [ $retry_count -lt $max_retries ]; do
+            if mysql --ssl-mode=REQUIRED \
+                  --host="${DB_HOST}" --port="${DB_PORT}" \
+                  --user="${DB_USER}" --password="${DB_PASS}" \
+                  --connect-timeout=30 \
+                  "${db}" < "db/${db}.sql"; then
+              echo "✓ Schema imported successfully into $db"
+              break
+            else
+              retry_count=$((retry_count + 1))
+              if [ $retry_count -lt $max_retries ]; then
+                echo "Import failed, retrying in 10 seconds... (attempt $retry_count/$max_retries)"
+                sleep 10
+              else
+                echo "Failed to import schema after $max_retries attempts"
+                exit 1
+              fi
+            fi
+          done
         done
-        echo "✓ Schema imported successfully."
+        echo "✓ All schemas imported successfully."
 
     # ─────────────────────────────────────────────────────────
-    # 4) Store credentials as repository secrets (unchanged)
+    # 4) Store credentials as repository secrets
     # ─────────────────────────────────────────────────────────
     - name: Save DB credentials as repo secrets
       if: success()
@@ -97,14 +119,22 @@ jobs:
         echo "✓ Repository secrets updated."
 
     # ─────────────────────────────────────────────────────────
-    # 5) Friendly summary (unchanged)
+    # 5) Friendly summary
     # ─────────────────────────────────────────────────────────
     - name: Display next steps
       run: |
         echo "========================================"
-        echo "Database cluster deployed & initialised!"
+        echo "Database cluster deployed & initialized!"
         echo "========================================"
-        echo "Host : ${{ steps.tfout.outputs.db_host }}"
-        echo "Port : ${{ steps.tfout.outputs.db_port }}"
-        echo "User : ${{ steps.tfout.outputs.db_user }}"
+        echo "Cluster: ${{ github.event.inputs.db_cluster_name }}"
+        echo "Host   : ${{ steps.tfout.outputs.db_host }}"
+        echo "Port   : ${{ steps.tfout.outputs.db_port }}"
+        echo "User   : ${{ steps.tfout.outputs.db_user }}"
+        echo "========================================"
+        echo ""
+        echo "Next steps:"
+        echo "1. Run the 'Axialy Admin UI' workflow to deploy the application"
+        echo "2. Access the admin interface to complete initialization"
+        echo ""
+        echo "Note: Database credentials have been saved as GitHub secrets"
         echo "========================================"
