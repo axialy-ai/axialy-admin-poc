@@ -1,11 +1,10 @@
 <?php
 /**
- * Axialy Admin – central DB connection / config helper (v3 - 2025-07-07)
+ * Axialy Admin – central DB connection / config helper (v4 - 2025-01-07)
  *
- *  • Creates required tables automatically on an empty database so the first
- *    browser hit doesn’t explode with “table not found”.
- *  • **Does NOT pre-seed any rows** – the original bootstrap flow
- *      index.php → init_user.php  still runs.
+ *  • Creates required tables automatically on an empty database
+ *  • Compatible with Digital Ocean Managed MySQL 8.0
+ *  • Optimized table creation with proper charset and indexes
  */
 
 namespace Axialy\AdminConfig;
@@ -76,7 +75,7 @@ final class AdminDBConfig
             );
 
             if ($dbName === $this->nameAdmin) {
-                $this->ensureSchema($pdo);          // ← new
+                $this->ensureSchema($pdo);
             }
             $this->pdoPool[$dbName] = $pdo;
         }
@@ -84,30 +83,41 @@ final class AdminDBConfig
     }
 
     /* ─────────────────────── internal helpers ────────────────────── */
-    /** Creates the two admin_* tables when they aren’t present. */
+    /** Creates the admin tables with proper structure for MySQL 8.0 */
     private function ensureSchema(PDO $pdo): void
     {
+        // Set session SQL mode for compatibility
+        $pdo->exec("SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO'");
+        
+        // admin_users table with optimized indexes
         $pdo->exec("CREATE TABLE IF NOT EXISTS admin_users (
             id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            username    VARCHAR(100) NOT NULL UNIQUE,
+            username    VARCHAR(50) NOT NULL,
             password    VARCHAR(255) NOT NULL,
-            email       VARCHAR(255) NULL,
+            email       VARCHAR(255) NOT NULL,
             is_active   TINYINT(1) NOT NULL DEFAULT 1,
-            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+            is_sys_admin TINYINT(1) NOT NULL DEFAULT 1,
+            created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at  DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_username (username),
+            KEY idx_is_active (is_active),
+            KEY idx_email (email)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 
+        // admin_user_sessions table with optimized indexes
         $pdo->exec("CREATE TABLE IF NOT EXISTS admin_user_sessions (
             id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             admin_user_id INT UNSIGNED NOT NULL,
             session_token CHAR(64) NOT NULL,
-            created_at    DATETIME NOT NULL,
+            created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             expires_at    DATETIME NOT NULL,
-            INDEX(session_token),
+            UNIQUE KEY uk_session_token (session_token),
+            KEY idx_admin_user_id (admin_user_id),
+            KEY idx_expires_at (expires_at),
             CONSTRAINT fk_admin_sessions_user
                 FOREIGN KEY (admin_user_id) REFERENCES admin_users(id)
-                ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+                ON DELETE CASCADE ON UPDATE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     }
 
     /** Loads .env once if any required var is absent. */
