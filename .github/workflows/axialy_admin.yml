@@ -59,7 +59,7 @@ jobs:
       - name: Wait for droplet to be ready
         run: |
           echo "Waiting for droplet to be ready..."
-          sleep 60
+          sleep 16
 
       - name: Configure SSH and Deploy
         env:
