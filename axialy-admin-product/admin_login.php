@@ -1,10 +1,15 @@
 <?php
-
 /*********************************************************************
- *  Hard-en cookie settings *before* the session is created
+ *  Cookie settings – mark the session cookie “Secure” **only** when
+ *  the request is actually served over HTTPS.  Required when you are
+ *  testing on http://<raw-IP> without TLS.
  *********************************************************************/
-ini_set('session.cookie_secure', 1);        // HTTPS only
-ini_set('session.cookie_httponly', 1);      // not accessible via JS
+$overTls = (
+    (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
+    (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443)
+);
+ini_set('session.cookie_secure',  $overTls ? 1 : 0);   // ← key change
+ini_set('session.cookie_httponly', 1);
 ini_set('session.cookie_samesite', 'Strict');
 
 session_name('axialy_admin_session');
@@ -19,7 +24,7 @@ use Axialy\AdminConfig\AdminDBConfig;
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
-$csrfToken   = $_SESSION['csrf_token'];
+$csrfToken    = $_SESSION['csrf_token'];
 $errorMessage = '';
 
 /** ------------------------------------------------------------------
