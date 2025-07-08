@@ -66,12 +66,9 @@ jobs:
           DROPLET_IP: ${{ steps.tfout.outputs.droplet_ip }}
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-
           echo "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-
           ssh-keyscan -H $DROPLET_IP >> ~/.ssh/known_hosts 2>/dev/null || true
-
           sudo apt-get update && sudo apt-get install -y expect
 
           # ---------- expect helper for ssh ----------
@@ -120,8 +117,17 @@ jobs:
           apt-get update
           apt-get install -y nginx php8.1-fpm php8.1-mysql php8.1-mbstring php8.1-xml php8.1-curl php8.1-zip php8.1-gd
 
+          # Harden PHP default behaviour
           sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
+
+          ################################################################
+          # GLOBAL SESSION-DIR PERMISSION FIX
+          # (root:www-data  1730) – makes PHP-FPM sessions reliable
+          ################################################################
+          chown root:www-data /var/lib/php/sessions
+          chmod 1730          /var/lib/php/sessions
           systemctl restart php8.1-fpm
+          ################################################################
 
           cat > /etc/nginx/sites-available/axialy-admin <<'NGINX_CONF'
           server {
@@ -133,7 +139,7 @@ jobs:
             server_name _;
 
             location / {
-              try_files \$uri \$uri/ /index.php?\$query_string;
+              try_files $uri $uri/ /index.php?$query_string;
             }
 
             location ~ \.php$ {
@@ -157,9 +163,10 @@ jobs:
           systemctl restart nginx
           DEPLOY_SCRIPT
 
-          # ---------- send deploy script ----------
+          # ---------- send & run deploy script ----------
           ./scp_with_pass.exp ~/.ssh/deploy_key deploy.sh root@$DROPLET_IP:/tmp/deploy.sh "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
-          ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "chmod +x /tmp/deploy.sh && bash /tmp/deploy.sh"
+          ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
+            "chmod +x /tmp/deploy.sh && bash /tmp/deploy.sh"
 
           # ---------- package application ----------
           cd axialy-admin-product
@@ -197,7 +204,7 @@ jobs:
           ADMIN_DEFAULT_PASSWORD=${{ secrets.ADMIN_DEFAULT_PASSWORD }}
           ENV_EOF
 
-          # ---------- copy environment file (FIX) ----------
+          # ---------- copy environment file ----------
           ./scp_with_pass.exp ~/.ssh/deploy_key env_file root@$DROPLET_IP:/var/www/axialy-admin/.env "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
 
           # ---------- set permissions ----------
@@ -205,7 +212,8 @@ jobs:
             "chmod 640 /var/www/axialy-admin/.env && chown www-data:www-data /var/www/axialy-admin/.env"
 
           # ---------- restart services ----------
-          ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "systemctl restart php8.1-fpm nginx"
+          ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
+            "systemctl restart php8.1-fpm nginx"
 
           # ---------- cleanup ----------
           rm -f deploy.sh env_file /tmp/axialy-admin.tar.gz ssh_with_pass.exp scp_with_pass.exp
