@@ -1,5 +1,4 @@
 name: Axialy DB
-
 on:
   workflow_dispatch:
     inputs:
@@ -15,20 +14,20 @@ on:
 
 jobs:
   apply:
-    runs-on: ubuntu-latest         # ← GitHub-hosted runner
+    runs-on: ubuntu-latest
     env:
       TF_VAR_do_token: ${{ secrets.DO_PAT }}
 
     steps:
-    # ─────────────────────────────────────────────────────────
-    # 1) Code checkout -- we need the *.sql dumps
-    # ─────────────────────────────────────────────────────────
+    # ────────────────────────────────────────────────────────────────
+    # 1) Code checkout – we need the *.sql dumps
+    # ────────────────────────────────────────────────────────────────
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # ─────────────────────────────────────────────────────────
-    # 2) Terraform - create cluster + dbs + service user
-    # ─────────────────────────────────────────────────────────
+    # ────────────────────────────────────────────────────────────────
+    # 2) Terraform – create cluster + DBs + service user
+    # ────────────────────────────────────────────────────────────────
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
@@ -47,62 +46,92 @@ jobs:
           -var="db_cluster_name=${{ github.event.inputs.db_cluster_name }}" \
           -var="region=${{ github.event.inputs.region }}" \
           -var="db_size=${{ github.event.inputs.size }}"
-
-        # expose outputs for later steps
         echo "db_host=$(terraform output -raw db_host)" >> "$GITHUB_OUTPUT"
         echo "db_port=$(terraform output -raw db_port)" >> "$GITHUB_OUTPUT"
         echo "db_user=$(terraform output -raw db_user)" >> "$GITHUB_OUTPUT"
         echo "db_pass=$(terraform output -raw db_pass)" >> "$GITHUB_OUTPUT"
 
-    # ─────────────────────────────────────────────────────────
-    # 3) ⚠️ NEW STEP ⚠️  - import baseline schema dumps
-    # ─────────────────────────────────────────────────────────
-    - name: Load baseline schema dumps
-      if: success()
+    # ────────────────────────────────────────────────────────────────
+    # 3) Load baseline schema dumps
+    # ────────────────────────────────────────────────────────────────
+    - name: Import schema
       env:
         DB_HOST: ${{ steps.tfout.outputs.db_host }}
         DB_PORT: ${{ steps.tfout.outputs.db_port }}
         DB_USER: ${{ steps.tfout.outputs.db_user }}
         DB_PASS: ${{ steps.tfout.outputs.db_pass }}
       run: |
+        set -euo pipefail
         sudo apt-get update -qq
         sudo apt-get install -y mysql-client
-
-        # DigitalOcean clusters require SSL by default -> --ssl-mode=REQUIRED
         for db in axialy_admin axialy_ui; do
-          echo ">> Importing into $db"
+          echo "⤵︎ Importing $db.sql into $db ..."
           mysql --ssl-mode=REQUIRED \
-                --host="${DB_HOST}" --port="${DB_PORT}" \
-                --user="${DB_USER}" --password="${DB_PASS}" "${db}" < "db/${db}.sql"
+                --host="$DB_HOST" --port="$DB_PORT" \
+                --user="$DB_USER" --password="$DB_PASS" "$db" < "db/${db}.sql"
         done
-        echo "✓ Schema imported successfully."
+        echo "✓ Schema import finished"
 
-    # ─────────────────────────────────────────────────────────
-    # 4) Store credentials as repository secrets (unchanged)
-    # ─────────────────────────────────────────────────────────
+    # ────────────────────────────────────────────────────────────────
+    # 4) Sanity checks – fail fast if anything important is missing
+    # ────────────────────────────────────────────────────────────────
+    - name: Verify critical tables / columns
+      env:
+        DB_HOST: ${{ steps.tfout.outputs.db_host }}
+        DB_PORT: ${{ steps.tfout.outputs.db_port }}
+        DB_USER: ${{ steps.tfout.outputs.db_user }}
+        DB_PASS: ${{ steps.tfout.outputs.db_pass }}
+      run: |
+        set -euo pipefail
+
+        function require_column() {
+          local db="$1" table="$2" col="$3"
+          local cnt
+          cnt=$(mysql --ssl-mode=REQUIRED -N -B \
+                --host="$DB_HOST" --port="$DB_PORT" \
+                --user="$DB_USER" --password="$DB_PASS" \
+                -e "SELECT COUNT(*) FROM information_schema.columns \
+                    WHERE table_schema='${db}' \
+                      AND table_name='${table}' \
+                      AND column_name='${col}';")
+          if [[ "$cnt" -eq 0 ]]; then
+            echo "::error::Missing column ${db}.${table}.${col}"
+            exit 1
+          fi
+        }
+
+        #  👉  Add assertions here whenever you add schema that MUST exist
+        require_column axialy_admin admin_users id
+        require_column axialy_admin admin_users username
+        require_column axialy_admin admin_users is_sys_admin
+        require_column axialy_admin admin_user_sessions session_token
+
+        echo "✓ All critical tables/columns are present"
+
+    # ────────────────────────────────────────────────────────────────
+    # 5) Store credentials as repo secrets (unchanged)
+    # ────────────────────────────────────────────────────────────────
     - name: Save DB credentials as repo secrets
       if: success()
       env:
         GH_TOKEN: ${{ secrets.GH_PAT }}
       run: |
-        if [ -z "$GH_TOKEN" ]; then
-          echo "::warning::GH_PAT secret not set. Cannot update repository secrets automatically."
+        if [[ -z "$GH_TOKEN" ]]; then
+          echo "::warning::GH_PAT secret not set – skipping secret update"
           exit 0
         fi
-
         gh secret set DB_HOST     --body "${{ steps.tfout.outputs.db_host }}"
         gh secret set DB_PORT     --body "${{ steps.tfout.outputs.db_port }}"
         gh secret set DB_USER     --body "${{ steps.tfout.outputs.db_user }}"
         gh secret set DB_PASSWORD --body "${{ steps.tfout.outputs.db_pass }}"
-        echo "✓ Repository secrets updated."
 
-    # ─────────────────────────────────────────────────────────
-    # 5) Friendly summary (unchanged)
-    # ─────────────────────────────────────────────────────────
+    # ────────────────────────────────────────────────────────────────
+    # 6) Friendly summary
+    # ────────────────────────────────────────────────────────────────
     - name: Display next steps
       run: |
         echo "========================================"
-        echo "Database cluster deployed & initialised!"
+        echo "Database cluster deployed & verified 🎉"
         echo "========================================"
         echo "Host : ${{ steps.tfout.outputs.db_host }}"
         echo "Port : ${{ steps.tfout.outputs.db_port }}"
