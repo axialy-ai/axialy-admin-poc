@@ -163,7 +163,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body>
   <div class="header">
-    <img src="https://axialy.com/assets/img/SOI.png" alt="Axialy Logo">
+    <img src="https://axiaba.com/assets/img/SOI.png" alt="Axialy Logo">
   </div>
 
   <div class="login-container">
