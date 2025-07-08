@@ -17,21 +17,21 @@ write_files:
   - path: /etc/environment
     append: true
     content: |
-      DB_HOST="${db_host}"
-      DB_PORT="${db_port}"
-      DB_USER="${db_user}"
-      DB_PASSWORD="${db_password}"
-      DB_NAME="axialy_admin"
+      DB_HOST=${db_host}
+      DB_PORT=${db_port}
+      DB_USER=${db_user}
+      DB_PASSWORD=${db_password}
+      DB_NAME=axialy_admin
 
-      UI_DB_HOST="${db_host}"
-      UI_DB_PORT="${db_port}"
-      UI_DB_USER="${db_user}"
-      UI_DB_PASSWORD="${db_password}"
-      UI_DB_NAME="axialy_ui"
+      UI_DB_HOST=${db_host}
+      UI_DB_PORT=${db_port}
+      UI_DB_USER=${db_user}
+      UI_DB_PASSWORD=${db_password}
+      UI_DB_NAME=axialy_ui
 
-      ADMIN_DEFAULT_USER="${admin_default_user}"
-      ADMIN_DEFAULT_EMAIL="${admin_default_email}"
-      ADMIN_DEFAULT_PASSWORD="${admin_default_password}"
+      ADMIN_DEFAULT_USER=${admin_default_user}
+      ADMIN_DEFAULT_EMAIL=${admin_default_email}
+      ADMIN_DEFAULT_PASSWORD=${admin_default_password}
 
 runcmd:
   # 1. firewall
