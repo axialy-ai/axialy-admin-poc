@@ -192,10 +192,10 @@ require_once __DIR__ . '/includes/ui_db_connection.php';
   <div id="left-panel" class="expanded">
     <div id="panel-header">
 <!--
-      <img src="https://axialy.com/assets/img/SOI.png" alt="Axialy Logo"/>
+      <img src="https://axiaba.com/assets/img/SOI.png" alt="Axialy Logo"/>
 -->
       <a href="index.php">
-        <img src="https://axialy.com/assets/img/SOI.png" alt="Axialy Logo" style    ="cursor: pointer;"/>
+        <img src="https://axiaba.com/assets/img/SOI.png" alt="Axialy Logo" style    ="cursor: pointer;"/>
       </a>      <h1>DB Viewer</h1>
     </div>
     <div id="table-list-panel">
@@ -208,7 +208,7 @@ require_once __DIR__ . '/includes/ui_db_connection.php';
     <div id="right-header">
       <!-- Left side: brand presence -->
       <div id="right-header-left">
-        <img src="https://axialy.com/assets/img/product_logo.png" alt="Axialy Logo"/>
+        <img src="https://axiaba.com/assets/img/product_logo.png" alt="Axialy Logo"/>
         <strong>Data Viewer</strong>
       </div>
       <!-- Right side: filter area -->
