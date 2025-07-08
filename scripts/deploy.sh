@@ -1,96 +1,95 @@
 #!/usr/bin/env bash
+#
+# deploy.sh – runs on the droplet via ssh
+#
+# Responsibilities
+#   • Installs/updates nginx + PHP, retrying sanely on apt locks
+#   • Unpacks /tmp/axialy-admin.tar.gz → /var/www/axialy-admin
+#   • Creates an nginx vhost (if missing) and reloads services
+#
+# This script is idempotent and will exit non-zero on any failure.
+#
+
 set -euo pipefail
 
-###############################################################################
-# Axialy Admin droplet bootstrap
-###############################################################################
+# -----------------------------------------------------------------------
+# Helper functions
+# -----------------------------------------------------------------------
+wait_for_apt() {
+  # Block until no dpkg/apt process or lock file is active
+  while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
+     || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 \
+     || pgrep -x apt >/dev/null \
+     || pgrep -x dpkg >/dev/null; do
+    echo "⟳ apt is busy – sleeping 5 s"
+    sleep 5
+  done
+}
 
-echo "▶ Waiting for apt/dpkg locks"
-while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
-   || sudo fuser /var/lib/apt/lists/lock      >/dev/null 2>&1; do
-  printf '.'
-  sleep 2
-done
-echo " ok"
+retry_apt() {
+  local tries=0 max=12   # 12 × 5 s = 60 s
+  until DEBIAN_FRONTEND=noninteractive \
+        apt-get -o DPkg::Lock::Timeout=30 "$@"; do
+    (( ++tries == max )) && {
+      echo "❌ apt is still locked after $((tries*5)) s – aborting"; exit 1; }
+    echo "⟳ apt locked – retrying ($tries/$max)"
+    sleep 5
+  done
+}
 
-echo "▶ Updating package lists"
-sudo apt-get update -qq
+# -----------------------------------------------------------------------
+# System packages (nginx + PHP)
+# -----------------------------------------------------------------------
+wait_for_apt
+retry_apt update -qq
+wait_for_apt            # unattended-upgrade often kicks in here
+retry_apt install -y \
+    nginx \
+    php8.1-fpm \
+    php8.1-{mysql,mbstring,xml,curl,zip,gd}
 
-echo "▶ Installing nginx + PHP-FPM + extensions"
-install_cmd="sudo DEBIAN_FRONTEND=noninteractive \
-  apt-get install -y nginx php8.1-fpm php8.1-mysql \
-                     php8.1-mbstring php8.1-xml php8.1-curl \
-                     php8.1-zip php8.1-gd"
-if ! eval "$install_cmd"; then
-  echo "⟳ apt was still busy — retrying in 5 s"
-  sleep 5
-  eval "$install_cmd"
-fi
+systemctl enable --now nginx php8.1-fpm
 
-echo "▶ Hardening PHP"
-sudo sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
+# -----------------------------------------------------------------------
+# Application code
+# -----------------------------------------------------------------------
+APP_DIR="/var/www/axialy-admin"
+mkdir -p "$APP_DIR"
+tar -xzf /tmp/axialy-admin.tar.gz -C "$APP_DIR" --strip-components=1
+chown -R www-data:www-data "$APP_DIR"
 
-echo "▶ Writing nginx vhost"
-sudo tee /etc/nginx/sites-available/axialy-admin.conf >/dev/null <<'NGINX'
+# -----------------------------------------------------------------------
+# Nginx vhost
+# -----------------------------------------------------------------------
+VHOST="/etc/nginx/sites-available/axialy-admin.conf"
+if [[ ! -f $VHOST ]]; then
+cat > "$VHOST" <<'NGINX'
 server {
-  listen 80 default_server;
-  listen [::]:80 default_server;
-  server_name _;
-  root /var/www/axialy-admin;
-  index index.php;
+    listen 80;
+    server_name _;
+    root /var/www/axialy-admin/public;
 
-  location / {
-    try_files $uri $uri/ /index.php?$query_string;
-  }
+    index index.php index.html;
 
-  location ~ \.php$ {
-    include snippets/fastcgi-php.conf;
-    fastcgi_pass unix:/run/php/php8.1-fpm.sock;
-  }
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
 
-  location ~ /\. { deny all; }
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+    }
 
-  add_header X-Frame-Options SAMEORIGIN;
-  add_header X-Content-Type-Options nosniff;
+    location ~* \.(jpg|jpeg|png|gif|css|js|ico|svg)$ {
+        expires 30d;
+        access_log off;
+    }
 }
 NGINX
-sudo ln -sf /etc/nginx/sites-available/axialy-admin.conf /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
+    ln -s "$VHOST" /etc/nginx/sites-enabled/axialy-admin.conf
+fi
 
-echo "▶ Enabling & starting services"
-sudo systemctl enable php8.1-fpm nginx
-sudo systemctl restart php8.1-fpm
-sudo nginx -t
-sudo systemctl restart nginx
+nginx -t
+systemctl reload nginx
 
-echo "▶ Syncing application code"
-sudo mkdir -p /var/www/axialy-admin
-sudo tar -xzf /tmp/axialy-admin.tar.gz -C /var/www/axialy-admin
-sudo chown -R www-data:www-data /var/www/axialy-admin
-sudo find /var/www/axialy-admin -type d -exec chmod 755 {} \;
-sudo find /var/www/axialy-admin -type f -exec chmod 644 {} \;
-
-echo "▶ Writing .env"
-sudo tee /var/www/axialy-admin/.env >/dev/null <<ENV
-DB_HOST=${DB_HOST}
-DB_PORT=${DB_PORT}
-DB_NAME=axialy_admin
-DB_USER=${DB_USER}
-DB_PASSWORD=${DB_PASSWORD}
-
-UI_DB_HOST=${DB_HOST}
-UI_DB_PORT=${DB_PORT}
-UI_DB_NAME=axialy_ui
-UI_DB_USER=${DB_USER}
-UI_DB_PASSWORD=${DB_PASSWORD}
-
-ADMIN_DEFAULT_USER=${ADMIN_DEFAULT_USER}
-ADMIN_DEFAULT_EMAIL=${ADMIN_DEFAULT_EMAIL}
-ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD}
-ENV
-sudo chown  www-data:www-data /var/www/axialy-admin/.env
-sudo chmod 640              /var/www/axialy-admin/.env
-
-echo "▶ Final nginx reload"
-sudo systemctl reload nginx
-echo "✅ Deployment script finished."
+echo "✅ Deployment finished"
