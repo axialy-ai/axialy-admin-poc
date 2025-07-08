@@ -14,48 +14,37 @@ packages:
   - ufw
 
 write_files:
-  - path: /etc/environment
+  - path: /etc/environment                # exported to every login shell
     content: |
       DB_HOST="${db_host}"
       DB_PORT="${db_port}"
       DB_USER="${db_user}"
       DB_PASSWORD="${db_password}"
       DB_NAME="axialy_admin"
+
       UI_DB_HOST="${db_host}"
       UI_DB_PORT="${db_port}"
       UI_DB_USER="${db_user}"
       UI_DB_PASSWORD="${db_password}"
       UI_DB_NAME="axialy_ui"
+
       ADMIN_DEFAULT_USER="${admin_default_user}"
       ADMIN_DEFAULT_EMAIL="${admin_default_email}"
       ADMIN_DEFAULT_PASSWORD="${admin_default_password}"
     append: true
 
 runcmd:
-  # Configure firewall
+  # 1. Harden firewall
   - ufw allow 22/tcp
   - ufw allow 80/tcp
   - ufw allow 443/tcp
   - ufw --force enable
-  
-  # Configure PHP
+
+  # 2. PHP hardening – disable cgi.fix_pathinfo
   - sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
   - systemctl restart php8.1-fpm
-  
-  # Create web directory
+
+  # 3. Prepare web root (no placeholder file any more!)
   - mkdir -p /var/www/axialy-admin
   - chown -R www-data:www-data /var/www/axialy-admin
-  
-  # Create a placeholder index.php
-  - |
-    cat > /var/www/axialy-admin/index.php << 'EOF'
-    <?php
-    echo "<h1>Axialy Admin - Deployment in Progress</h1>";
-    echo "<p>The application will be deployed shortly...</p>";
-    echo "<p>Server Time: " . date('Y-m-d H:i:s') . "</p>";
-    phpinfo();
-    EOF
-  
-  # Set permissions
-  - chown www-data:www-data /var/www/axialy-admin/index.php
-  - chmod 644 /var/www/axialy-admin/index.php
+  - find  /var/www/axialy-admin -type d -exec chmod 755 {} \;
