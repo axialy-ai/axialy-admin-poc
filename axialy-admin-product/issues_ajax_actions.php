@@ -144,11 +144,11 @@ function sendEmail(PDO $pdo) {
         $adminEmail = $admStmt->fetchColumn();
         if (!$adminEmail) {
             // fallback
-            $adminEmail = 'admin@axialy.com';
+            $adminEmail = 'admin@axiaba.com';
         }
     } catch (\Exception $ex) {
         // fallback
-        $adminEmail = 'admin@axialy.com';
+        $adminEmail = 'admin@axiaba.com';
     }
 
     // 3) Build the email subject & body
@@ -180,7 +180,7 @@ Last Updated: {$updatedAt}
 --------------------------------------------------
 
 Thank you for using Axialy. If you have any follow-up,
-you can reply to support@axialy.com.
+you can reply to support@axiaba.com.
 
 Best regards,
 Axialy Support Team
@@ -189,9 +189,9 @@ Axialy Support Team
     // 4) Actually send the email (simple mail() or a real mail library)
     // Here’s a quick mail() example:
     $headers  = "From: {$adminEmail}\r\n";
-    $headers .= "Reply-To: support@axialy.com\r\n";
+    $headers .= "Reply-To: support@axiaba.com\r\n";
     $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
-    $headers .= "Cc: support@axialy.com\r\n";
+    $headers .= "Cc: support@axiaba.com\r\n";
     $headers .= "Bcc: {$adminEmail}\r\n";
 
     // Try to send
