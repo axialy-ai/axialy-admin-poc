@@ -3,7 +3,7 @@ require_once __DIR__ . '/AdminDBConfig.php';
 use Axialy\AdminConfig\AdminDBConfig;
 
 /**
- * Ensures the admin session is valid in Axialy_ADMIN.admin_user_sessions,
+ * Ensures the admin session is valid in axialy_admin.admin_user_sessions,
  * or else redirects to /admin_login.php.
  */
 function requireAdminAuth()
@@ -17,7 +17,7 @@ function requireAdminAuth()
         logoutAndRedirect();
     }
 
-    // Query Axialy_ADMIN DB for admin_user_sessions
+    // Query axialy_admin DB for admin_user_sessions
     $adminDB = AdminDBConfig::getInstance()->getPdo();
     $stmt = $adminDB->prepare("
         SELECT s.id, s.expires_at,
