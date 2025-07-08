@@ -1,5 +1,4 @@
-# .github/workflows/axialy_admin.yml
-name: "Axialy Admin UI"
+name: Axialy Admin UI
 
 on:
   workflow_dispatch:
@@ -20,15 +19,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # ────────────────────────────────────────────────
-    # 1)  Check out the repo
-    # ────────────────────────────────────────────────
+    # 1  Checkout repo
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # ────────────────────────────────────────────────
-    # 2)  Terraform – create / update Droplet
-    # ────────────────────────────────────────────────
+    # 2  Terraform – create / update droplet + firewall
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
@@ -44,8 +39,6 @@ jobs:
     - name: Terraform apply
       id: tfout
       working-directory: infra/droplet
-      env:
-        TF_VAR_do_token: ${{ secrets.DO_PAT }}
       run: |
         terraform apply -auto-approve -input=false \
           -var="droplet_name=${{ github.event.inputs.droplet_name }}" \
@@ -59,19 +52,18 @@ jobs:
           -var="admin_default_user=${{ secrets.ADMIN_DEFAULT_USER }}" \
           -var="admin_default_email=${{ secrets.ADMIN_DEFAULT_EMAIL }}" \
           -var="admin_default_password=${{ secrets.ADMIN_DEFAULT_PASSWORD }}"
-
         echo "droplet_ip=$(terraform output -raw droplet_ip)"  >> "$GITHUB_OUTPUT"
         echo "droplet_id=$(terraform output -raw droplet_id)"  >> "$GITHUB_OUTPUT"
+      env:
+        TF_VAR_do_token: ${{ secrets.DO_PAT }}
 
-    # ────────────────────────────────────────────────
-    # 3)  Wait until SSH is actually reachable
-    # ────────────────────────────────────────────────
+    # 3  Wait until SSH comes up
     - name: Wait for SSH port 22
       timeout-minutes: 10
       env:
         IP: ${{ steps.tfout.outputs.droplet_ip }}
       run: |
-        echo -n "⏳ Waiting for port 22 on $IP ..."
+        echo -n "⏳ Waiting for port 22 on $IP"
         for i in {1..60}; do
           nc -z -w 3 "$IP" 22 && echo " OK" && exit 0
           echo -n "."
@@ -81,13 +73,12 @@ jobs:
         echo "::error::Droplet never became reachable on port 22"
         exit 1
 
-    # ────────────────────────────────────────────────
-    # 4)  SSH + deploy script
-    # ────────────────────────────────────────────────
-    - name: Configure SSH and Deploy
+    # 4  Copy artefacts + run deploy.sh
+    - name: Configure SSH and deploy
       env:
         DROPLET_IP: ${{ steps.tfout.outputs.droplet_ip }}
       run: |
+        # ── SSH prep ────────────────────────────────────────────
         mkdir -p ~/.ssh && chmod 700 ~/.ssh
         echo "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/deploy_key
         chmod 600 ~/.ssh/deploy_key
@@ -96,6 +87,7 @@ jobs:
         sudo apt-get update -qq
         sudo apt-get install -y expect
 
+        # helper wrappers (expect → passphrase unlock)
         cat > ssh_with_pass.exp <<'EOF'
         #!/usr/bin/expect -f
         set timeout 600
@@ -126,107 +118,24 @@ jobs:
         EOF
         chmod +x scp_with_pass.exp
 
-        # ───────────────────────────────
-        # deploy.sh gets copied & executed
-        # ───────────────────────────────
-        cat > deploy.sh <<'DEPLOY'
-        #!/bin/bash
-        set -eo pipefail
+        # ── Generate artefacts ──────────────────────────────────
+        ( cd axialy-admin-product && tar -czf /tmp/axialy-admin.tar.gz . )
 
-        echo "▶ Installing nginx + PHP-FPM"
-        apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive \
-          apt-get install -y nginx php8.1-fpm php8.1-mysql \
-                             php8.1-mbstring php8.1-xml php8.1-curl \
-                             php8.1-zip php8.1-gd
-
-        echo "▶ Hardening PHP"
-        sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
-
-        echo "▶ Writing nginx vhost"
-        cat > /etc/nginx/sites-available/axialy-admin.conf <<'NGINX'
-        server {
-          listen 80;
-          server_name _;
-          root /var/www/axialy-admin;
-          index index.php;
-
-          location / {
-            try_files $uri $uri/ /index.php?$query_string;
-          }
-
-          location ~ \.php$ {
-            include snippets/fastcgi-php.conf;
-            fastcgi_pass unix:/run/php/php8.1-fpm.sock;
-          }
-
-          location ~ /\. { deny all; }
-
-          add_header X-Frame-Options SAMEORIGIN;
-          add_header X-Content-Type-Options nosniff;
-        }
-        NGINX
-        ln -sf /etc/nginx/sites-available/axialy-admin.conf /etc/nginx/sites-enabled/
-        rm -f /etc/nginx/sites-enabled/default
-
-        echo "▶ Enabling & starting services"
-        systemctl enable php8.1-fpm nginx
-        systemctl restart php8.1-fpm
-        nginx -t
-        systemctl restart nginx
-
-        echo "▶ Syncing application code"
-        mkdir -p /var/www/axialy-admin
-        tar -xzf /tmp/axialy-admin.tar.gz -C /var/www/axialy-admin
-        chown -R www-data:www-data /var/www/axialy-admin
-        find /var/www/axialy-admin -type d -exec chmod 755 {} \;
-        find /var/www/axialy-admin -type f -exec chmod 644 {} \;
-
-        echo "▶ Dropping .env"
-        cat > /var/www/axialy-admin/.env <<ENV
-        DB_HOST=${{ secrets.DB_HOST }}
-        DB_PORT=${{ secrets.DB_PORT }}
-        DB_NAME=axialy_admin
-        DB_USER=${{ secrets.DB_USER }}
-        DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-
-        UI_DB_HOST=${{ secrets.DB_HOST }}
-        UI_DB_PORT=${{ secrets.DB_PORT }}
-        UI_DB_NAME=axialy_ui
-        UI_DB_USER=${{ secrets.DB_USER }}
-        UI_DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-
-        ADMIN_DEFAULT_USER=${{ secrets.ADMIN_DEFAULT_USER }}
-        ADMIN_DEFAULT_EMAIL=${{ secrets.ADMIN_DEFAULT_EMAIL }}
-        ADMIN_DEFAULT_PASSWORD=${{ secrets.ADMIN_DEFAULT_PASSWORD }}
-        ENV
-        chown www-data:www-data /var/www/axialy-admin/.env
-        chmod 640 /var/www/axialy-admin/.env
-
-        echo "▶ Final nginx reload"
-        systemctl reload nginx
-        echo "✅ Deployment script finished."
-        DEPLOY
-
+        # copy deploy script from repo to runner workspace
+        cp scripts/deploy.sh ./deploy.sh
         chmod +x deploy.sh
 
-        echo "▶  Uploading artefacts"
-        ( cd axialy-admin-product && tar -czf /tmp/axialy-admin.tar.gz . )
+        echo "▶ Uploading artefacts"
         ./scp_with_pass.exp ~/.ssh/deploy_key /tmp/axialy-admin.tar.gz \
-            root@$DROPLET_IP:/tmp/                                   \
-            "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
+            root@$DROPLET_IP:/tmp/ "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
         ./scp_with_pass.exp ~/.ssh/deploy_key deploy.sh \
-            root@$DROPLET_IP:/tmp/deploy.sh             \
-            "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
+            root@$DROPLET_IP:/tmp/deploy.sh "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
 
-        echo "▶  Running deploy.sh on droplet"
+        echo "▶ Running deploy.sh on droplet"
         ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP \
-            "${{ secrets.DROPLET_SSH_PASSPHRASE }}"       \
-            "bash /tmp/deploy.sh"
+            "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "bash /tmp/deploy.sh"
 
-    # ────────────────────────────────────────────────
-    # 5)  Smoke-test HTTP port 80
-    # ────────────────────────────────────────────────
+    # 5  Smoke-test HTTP
     - name: Verify deployment (HTTP 200)
       env:
         IP: ${{ steps.tfout.outputs.droplet_ip }}
@@ -245,9 +154,7 @@ jobs:
         echo "::error::nginx never returned HTTP 200 – check the droplet logs."
         exit 1
 
-    # ────────────────────────────────────────────────
-    # 6)  Friendly summary
-    # ────────────────────────────────────────────────
+    # 6  Friendly summary
     - name: Display deployment info
       run: |
         echo "========================================"
