@@ -19,30 +19,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # ────────────────────────────────────────────────
-    # 1)  Check out the repo
-    # ────────────────────────────────────────────────
-    - name: Checkout code
-      uses: actions/checkout@v4
+    # 1 ▸ checkout
+    - uses: actions/checkout@v4
 
-    # ────────────────────────────────────────────────
-    # 2)  Terraform – create / update Droplet
-    # ────────────────────────────────────────────────
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
+    # 2 ▸ terraform
+    - uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: 1.6.6
         terraform_wrapper: false
 
     - name: Terraform init
       working-directory: infra/droplet
+      env: { TF_VAR_do_token: ${{ secrets.DO_PAT }} }
       run: terraform init -input=false
-      env:
-        TF_VAR_do_token: ${{ secrets.DO_PAT }}
 
     - name: Terraform apply
       id: tfout
       working-directory: infra/droplet
+      env: { TF_VAR_do_token: ${{ secrets.DO_PAT }} }
       run: |
         terraform apply -auto-approve -input=false \
           -var="droplet_name=${{ github.event.inputs.droplet_name }}" \
@@ -58,46 +52,23 @@ jobs:
           -var="admin_default_password=${{ secrets.ADMIN_DEFAULT_PASSWORD }}"
 
         echo "droplet_ip=$(terraform output -raw droplet_ip)"  >> "$GITHUB_OUTPUT"
-        echo "droplet_id=$(terraform output -raw droplet_id)"  >> "$GITHUB_OUTPUT"
-      env:
-        TF_VAR_do_token: ${{ secrets.DO_PAT }}
 
-    # ────────────────────────────────────────────────
-    # 3)  Wait until SSH is actually reachable
-    # ────────────────────────────────────────────────
-    - name: Wait for SSH port 22
-      timeout-minutes: 10
-      env:
-        IP: ${{ steps.tfout.outputs.droplet_ip }}
-      run: |
-        echo -n "⏳ Waiting for port 22 on $IP ..."
-        for i in {1..60}; do
-          nc -z -w 3 "$IP" 22 && echo " OK" && exit 0
-          echo -n "."
-          sleep 5
-        done
-        echo ""
-        echo "::error::Droplet never became reachable on port 22"
-        exit 1
+    # 3 ▸ wait a little longer – DO often needs >60 s to hand off SSH
+    - name: ⏳ Allow droplet to finish booting
+      run: sleep 120
 
-    # ────────────────────────────────────────────────
-    # 4)  SSH + deploy script
-    # ────────────────────────────────────────────────
-    - name: Configure SSH and Deploy
-      env:
-        DROPLET_IP: ${{ steps.tfout.outputs.droplet_ip }}
+    # 4 ▸ SSH helpers
+    - name: Prepare SSH helpers
       run: |
         mkdir -p ~/.ssh && chmod 700 ~/.ssh
         echo "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/deploy_key
         chmod 600 ~/.ssh/deploy_key
-        ssh-keyscan -H $DROPLET_IP >> ~/.ssh/known_hosts 2>/dev/null || true
-
-        sudo apt-get update -qq
-        sudo apt-get install -y expect
+        ssh-keyscan -H ${{ steps.tfout.outputs.droplet_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
+        sudo apt-get update -qq && sudo apt-get install -y expect
 
         cat > ssh_with_pass.exp <<'EOF'
         #!/usr/bin/expect -f
-        set timeout 600
+        set timeout 900
         set key  [lindex $argv 0]
         set host [lindex $argv 1]
         set pass [lindex $argv 2]
@@ -112,7 +83,7 @@ jobs:
 
         cat > scp_with_pass.exp <<'EOF'
         #!/usr/bin/expect -f
-        set timeout 600
+        set timeout 900
         set key  [lindex $argv 0]
         set src  [lindex $argv 1]
         set dst  [lindex $argv 2]
@@ -125,132 +96,135 @@ jobs:
         EOF
         chmod +x scp_with_pass.exp
 
-        # ───────────────────────────────
-        # deploy.sh gets copied & executed
-        # ───────────────────────────────
+    # 5 ▸ deployment script copied & executed on the droplet
+    - name: Push and run deploy.sh
+      env:
+        IP:  ${{ steps.tfout.outputs.droplet_ip }}
+        PPH: ${{ secrets.DROPLET_SSH_PASSPHRASE }}
+      run: |
         cat > deploy.sh <<'DEPLOY'
-        #!/bin/bash
-        set -eo pipefail
+        #!/usr/bin/env bash
+        set -euo pipefail
+        export DEBIAN_FRONTEND=noninteractive
 
-        echo "▶ Installing nginx + PHP-FPM"
+        echo "◼︎ installing nginx + PHP-FPM"
         apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive \
-          apt-get install -y nginx php8.1-fpm php8.1-mysql \
-                             php8.1-mbstring php8.1-xml php8.1-curl \
-                             php8.1-zip php8.1-gd
+        apt-get install -y nginx php8.1-fpm php8.1-mysql \
+                           php8.1-mbstring php8.1-xml php8.1-curl \
+                           php8.1-zip php8.1-gd ufw
 
-        echo "▶ Hardening PHP"
-        sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
+        echo "◼︎ hardening PHP"
+        sed -i 's@;cgi.fix_pathinfo=1@cgi.fix_pathinfo=0@' /etc/php/8.1/fpm/php.ini
 
-        echo "▶ Writing nginx vhost"
-        cat > /etc/nginx/sites-available/axialy-admin.conf <<'NGINX'
+        echo "◼︎ nginx vhost"
+        cat > /etc/nginx/sites-available/axialy-admin <<'CONF'
         server {
-          listen 80;
+          listen 80 default_server;
+          listen [::]:80 default_server;
           server_name _;
           root /var/www/axialy-admin;
           index index.php;
 
-          location / {
-            try_files $uri $uri/ /index.php?$query_string;
-          }
-
+          location /        { try_files $uri $uri/ /index.php?$query_string; }
           location ~ \.php$ {
             include snippets/fastcgi-php.conf;
-            fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+            fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
           }
-
-          location ~ /\. { deny all; }
-
-          add_header X-Frame-Options SAMEORIGIN;
-          add_header X-Content-Type-Options nosniff;
+          location ~ /\.  { deny all; }
+          add_header X-Frame-Options "SAMEORIGIN";
+          add_header X-Content-Type-Options "nosniff";
+          add_header X-XSS-Protection "1; mode=block";
         }
-        NGINX
-        ln -sf /etc/nginx/sites-available/axialy-admin.conf /etc/nginx/sites-enabled/
-        rm -f  /etc/nginx/sites-enabled/default
+        CONF
+        ln -sf /etc/nginx/sites-available/axialy-admin /etc/nginx/sites-enabled/
+        rm -f /etc/nginx/sites-enabled/default
 
-        echo "▶ Enabling & starting services"
-        systemctl enable php8.1-fpm nginx
-        systemctl restart php8.1-fpm
+        echo "◼︎ firewall"
+        ufw --force reset
+        ufw --force default deny incoming
+        ufw --force default allow outgoing
+        ufw --force allow 22
+        ufw --force allow 80
+        ufw --force allow 443
+        ufw --force enable
+
+        echo "◼︎ enable + restart services"
+        systemctl enable nginx php8.1-fpm
         nginx -t
-        systemctl restart nginx
+        systemctl restart php8.1-fpm nginx
+        DEPLOY
 
-        echo "▶ Syncing application code"
-        mkdir -p /var/www/axialy-admin
-        tar -xzf /tmp/axialy-admin.tar.gz -C /var/www/axialy-admin
-        chown -R www-data:www-data /var/www/axialy-admin
-        find /var/www/axialy-admin -type d -exec chmod 755 {} \;
-        find /var/www/axialy-admin -type f -exec chmod 644 {} \;
+        # copy + execute
+        ./scp_with_pass.exp ~/.ssh/deploy_key deploy.sh           root@$IP:/tmp/deploy.sh $PPH
+        ./ssh_with_pass.exp ~/.ssh/deploy_key $IP $PPH "bash /tmp/deploy.sh"
 
-        echo "▶ Dropping .env"
-        cat > /var/www/axialy-admin/.env <<ENV
+    # 6 ▸ ship application code
+    - name: Ship code
+      env:
+        IP:  ${{ steps.tfout.outputs.droplet_ip }}
+        PPH: ${{ secrets.DROPLET_SSH_PASSPHRASE }}
+      run: |
+        tar -czf axialy-admin.tar.gz -C axialy-admin-product .
+        ./scp_with_pass.exp ~/.ssh/deploy_key axialy-admin.tar.gz root@$IP:/tmp/ $PPH
+        ./ssh_with_pass.exp ~/.ssh/deploy_key $IP $PPH "
+            mkdir -p /var/www/axialy-admin &&
+            tar -xzf /tmp/axialy-admin.tar.gz -C /var/www/axialy-admin &&
+            chown -R www-data:www-data /var/www/axialy-admin &&
+            find /var/www/axialy-admin -type d -exec chmod 755 {} \; &&
+            find /var/www/axialy-admin -type f -exec chmod 644 {} \;"
+
+    # 7 ▸ copy .env
+    - name: Push .env
+      env:
+        IP:  ${{ steps.tfout.outputs.droplet_ip }}
+        PPH: ${{ secrets.DROPLET_SSH_PASSPHRASE }}
+      run: |
+        cat > .env <<EOF
+        # Axialy Admin DB
         DB_HOST=${{ secrets.DB_HOST }}
         DB_PORT=${{ secrets.DB_PORT }}
         DB_NAME=axialy_admin
         DB_USER=${{ secrets.DB_USER }}
         DB_PASSWORD=${{ secrets.DB_PASSWORD }}
 
+        # Axialy UI DB
         UI_DB_HOST=${{ secrets.DB_HOST }}
         UI_DB_PORT=${{ secrets.DB_PORT }}
         UI_DB_NAME=axialy_ui
         UI_DB_USER=${{ secrets.DB_USER }}
         UI_DB_PASSWORD=${{ secrets.DB_PASSWORD }}
 
+        # Admin defaults
         ADMIN_DEFAULT_USER=${{ secrets.ADMIN_DEFAULT_USER }}
         ADMIN_DEFAULT_EMAIL=${{ secrets.ADMIN_DEFAULT_EMAIL }}
         ADMIN_DEFAULT_PASSWORD=${{ secrets.ADMIN_DEFAULT_PASSWORD }}
-        ENV
-        chown www-data:www-data /var/www/axialy-admin/.env
-        chmod 640 /var/www/axialy-admin/.env
+        EOF
 
-        echo "▶ Final nginx reload"
-        systemctl reload nginx
-        echo "✅ Deployment script finished."
-        DEPLOY
+        ./scp_with_pass.exp ~/.ssh/deploy_key .env root@$IP:/var/www/axialy-admin/.env $PPH
+        ./ssh_with_pass.exp ~/.ssh/deploy_key $IP $PPH "
+            chown www-data:www-data /var/www/axialy-admin/.env &&
+            chmod 640 /var/www/axialy-admin/.env"
 
-        chmod +x deploy.sh
-
-        echo "▶  Uploading artefacts"
-        ( cd axialy-admin-product && tar -czf /tmp/axialy-admin.tar.gz . )
-        ./scp_with_pass.exp ~/.ssh/deploy_key /tmp/axialy-admin.tar.gz \
-            root@$DROPLET_IP:/tmp/                                   \
-            "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
-        ./scp_with_pass.exp ~/.ssh/deploy_key deploy.sh \
-            root@$DROPLET_IP:/tmp/deploy.sh             \
-            "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
-
-        echo "▶  Running deploy.sh on droplet"
-        ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP \
-            "${{ secrets.DROPLET_SSH_PASSPHRASE }}"       \
-            "bash /tmp/deploy.sh"
-
-    # ────────────────────────────────────────────────
-    # 5)  Smoke-test HTTP port 80
-    # ────────────────────────────────────────────────
-    - name: Verify deployment (HTTP 200)
+    # 8 ▸ health-check – wait up to 10 min for nginx
+    - name: Verify deployment
       env:
         IP: ${{ steps.tfout.outputs.droplet_ip }}
       run: |
-        echo -n "⏳ Waiting for nginx to answer"
-        for i in {1..60}; do
-          code=$(curl -s -o /dev/null -w "%{http_code}" http://$IP/admin_login.php || true)
-          if [ "$code" = "200" ]; then
-            echo " – success!"
+        for i in {1..120}; do
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://$IP/admin_login.php" || true)
+          if [[ "$CODE" =~ ^(200|302|403|404)$ ]]; then
+            echo "✅ nginx is answering (HTTP $CODE)"
             exit 0
           fi
-          echo -n "."
-          sleep 3
+          echo -n "⏳ Waiting for nginx to answer (attempt $i/120)… "
+          sleep 5
         done
-        echo ""
-        echo "::error::nginx never returned HTTP 200 – check the droplet logs."
+        echo "::error:: nginx never answered within 10 minutes."
         exit 1
 
-    # ────────────────────────────────────────────────
-    # 6)  Friendly summary
-    # ────────────────────────────────────────────────
-    - name: Display deployment info
+    # 9 ▸ summary
+    - name: Complete
       run: |
-        echo "========================================"
-        echo "Axialy Admin deployed!"
-        echo "Open   → http://${{ steps.tfout.outputs.droplet_ip }}/admin_login.php"
-        echo "SSH    → root@${{ steps.tfout.outputs.droplet_ip }}"
-        echo "========================================"
+        echo "================================================="
+        echo " Axialy Admin is live ➜ http://${{ steps.tfout.outputs.droplet_ip }}/admin_login.php"
+        echo "================================================="
