@@ -21,7 +21,7 @@ if (session_status() === PHP_SESSION_NONE) {
  * ────────────────────────────────────────────────────────── */
 $host = getenv('UI_DB_HOST') ?: '';
 $port = getenv('UI_DB_PORT') ?: '3306';
-$db   = getenv('UI_DB_NAME') ?: 'Axialy_UI';
+$db   = getenv('UI_DB_NAME') ?: 'axialy_ui';
 $user = getenv('UI_DB_USER') ?: '';
 $pass = getenv('UI_DB_PASSWORD') ?: '';
 
