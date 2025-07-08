@@ -141,7 +141,7 @@ jobs:
         IP: ${{ steps.tfout.outputs.droplet_ip }}
       run: |
         echo -n "⏳ Waiting for nginx to answer"
-        for i in {1..60}; do
+        for i in {1..120}; do      # 120 × 3 s = 6 min
           code=$(curl -s -o /dev/null -w "%{http_code}" http://$IP/admin_login.php || true)
           if [ "$code" = "200" ]; then
             echo " – success!"
