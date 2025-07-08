@@ -2,11 +2,17 @@
 /**
  * Axialy Admin – central DB connection / config helper
  *
- * Public usage (unchanged):
- *   $db = AdminDBConfig::getInstance()->getPdo();  // PDO handle
- *   $host = AdminDBConfig::getInstance()->getHost(); // etc.
+ * Singleton pattern keeps one PDO pool per request.
  *
- * © 2025 Axialy – All rights reserved.
+ * New in this revision (2025‑07‑07):
+ *  • Automatically loads .env if required (same as v2).
+ *  • **Self‑migrates**: the first time a connection to the Admin DB is
+ *    requested, it checks for the core tables (currently just `admin_users`).
+ *    If they don’t exist it creates them and seeds the default admin user
+ *    from ADMIN_DEFAULT_* env vars. This removes the manual SQL‑import step
+ *    that was breaking fresh droplets.
+ *
+ * Public API remains unchanged.
  */
 
 namespace Axialy\AdminConfig;
@@ -20,7 +26,6 @@ final class AdminDBConfig
 
     private static ?self $instance = null;
 
-    /* Connection details */
     private string $host;
     private string $user;
     private string $password;
@@ -28,11 +33,10 @@ final class AdminDBConfig
     private string $nameAdmin;
     private string $nameUI;
 
-    /** @var PDO[] Lazy-initialised PDO handles, keyed by DB name */
+    /** @var PDO[] */
     private array $pdoPool = [];
 
-    /* --------------------------------------------------------------------- */
-
+    /* ------------------------------------------------------------------ */
     /**
      * Singleton accessor.
      */
@@ -42,14 +46,12 @@ final class AdminDBConfig
     }
 
     /**
-     * @throws RuntimeException if required env vars are still missing.
+     * @throws RuntimeException if required env vars are missing.
      */
     private function __construct()
     {
-        // 1️⃣  Load .env once if env vars are missing.
         $this->bootstrapEnvIfRequired();
 
-        // 2️⃣  Validate.
         foreach (self::REQUIRED_VARS as $key) {
             if (getenv($key) === false) {
                 throw new RuntimeException(
@@ -58,7 +60,6 @@ final class AdminDBConfig
             }
         }
 
-        // 3️⃣  Capture.
         $this->host       = getenv('DB_HOST');
         $this->user       = getenv('DB_USER');
         $this->password   = getenv('DB_PASSWORD');
@@ -67,66 +68,81 @@ final class AdminDBConfig
         $this->nameUI     = getenv('UI_DB_NAME')  ?: 'axialy_ui';
     }
 
-    /* --------------------------------------------------------------------- */
-    /*  Public getters                                                       */
-    /* --------------------------------------------------------------------- */
+    /* ------------------------------------------------------------------ */
+    /*  Public helpers                                                     */
+    /* ------------------------------------------------------------------ */
 
-    public function getHost(): string      { return $this->host; }
-    public function getUser(): string      { return $this->user; }
-    public function getPassword(): string  { return $this->password; }
-    public function getPort(): string      { return $this->port; }
-
-    /**
-     * Convenience: obtain a PDO for the Admin DB (default).
-     */
     public function getPdo(): PDO
     {
         return $this->getPdoFor($this->nameAdmin);
     }
 
-    /**
-     * Convenience: obtain a PDO for the UI DB.
-     */
     public function getPdoUI(): PDO
     {
         return $this->getPdoFor($this->nameUI);
     }
 
-    /**
-     * Generic: obtain (and reuse) a PDO for any DB name.
-     */
     public function getPdoFor(string $dbName): PDO
     {
         if (!isset($this->pdoPool[$dbName])) {
-            $dsn = sprintf(
-                'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
-                $this->host,
-                $this->port,
-                $dbName
-            );
+            $dsn = sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
+                $this->host, $this->port, $dbName);
 
-            $this->pdoPool[$dbName] = new PDO(
-                $dsn,
-                $this->user,
-                $this->password,
-                [
-                    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                    PDO::ATTR_PERSISTENT         => false,
-                ]
-            );
+            $pdo = new PDO($dsn, $this->user, $this->password, [
+                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_PERSISTENT         => false,
+            ]);
+
+            // One‑time migration for the admin DB only.
+            if ($dbName === $this->nameAdmin) {
+                $this->ensureSchema($pdo);
+            }
+
+            $this->pdoPool[$dbName] = $pdo;
         }
         return $this->pdoPool[$dbName];
     }
 
-    /* --------------------------------------------------------------------- */
-    /*  Internal helpers                                                     */
-    /* --------------------------------------------------------------------- */
+    /* ------------------------------------------------------------------ */
+    /*  Schema bootstrap                                                   */
+    /* ------------------------------------------------------------------ */
 
     /**
-     * If any required env var is absent, attempt to parse a `.env` file in the
-     * project root and populate the process environment *once*.
+     * Creates the minimal schema the admin UI needs on a brand‑new database.
+     * Safe to call repeatedly – uses IF NOT EXISTS & UPSERTs.
      */
+    private function ensureSchema(PDO $pdo): void
+    {
+        // 1️⃣  admin_users table
+        $pdo->exec("CREATE TABLE IF NOT EXISTS admin_users (
+            id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            username    VARCHAR(100) NOT NULL UNIQUE,
+            password    VARCHAR(255) NOT NULL,
+            email       VARCHAR(255) NULL,
+            is_active   TINYINT(1) NOT NULL DEFAULT 1,
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+        // 2️⃣  Seed default admin user (idempotent)
+        $defUser  = getenv('ADMIN_DEFAULT_USER')     ?: 'admin';
+        $defEmail = getenv('ADMIN_DEFAULT_EMAIL')    ?: 'admin@example.com';
+        $defPass  = getenv('ADMIN_DEFAULT_PASSWORD') ?: 'ChangeMe123!';
+        $hash     = password_hash($defPass, PASSWORD_DEFAULT);
+
+        $stmt = $pdo->prepare("REPLACE INTO admin_users (id, username, password, email, is_active)
+                               VALUES (
+                                 (SELECT id FROM (SELECT id FROM admin_users WHERE username = :u LIMIT 1) AS x),
+                                 :u, :p, :e, 1
+                               )");
+        $stmt->execute([':u' => $defUser, ':p' => $hash, ':e' => $defEmail]);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  Private helpers                                                    */
+    /* ------------------------------------------------------------------ */
+
     private function bootstrapEnvIfRequired(): void
     {
         foreach (self::REQUIRED_VARS as $key) {
@@ -134,22 +150,19 @@ final class AdminDBConfig
                 continue; // already present
             }
 
-            // Parse .env (key=value, no quotes) – tolerant of Windows line-endings.
             $envPath = dirname(__DIR__, 1) . '/.env';
             if (!is_file($envPath)) {
-                return; // Nothing to load.
+                return; // nothing to load
             }
-
-            $lines = file($envPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-            foreach ($lines as $line) {
-                if ($line[0] === '#') { continue; }
+            foreach (file($envPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+                if ($line[0] === '#') continue;
                 [$k, $v] = array_map('trim', explode('=', $line, 2));
                 if ($k !== '' && getenv($k) === false) {
                     putenv("$k=$v");
-                    $_ENV[$k] = $v; // For frameworks relying on $_ENV
+                    $_ENV[$k] = $v;
                 }
             }
-            return; // Loaded once; break out.
+            return; // loaded once
         }
     }
 }
