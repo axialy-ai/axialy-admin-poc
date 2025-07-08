@@ -1,10 +1,13 @@
 <?php
-
 /*********************************************************************
- *  Hard-en cookie settings *before* the session is created
+ *  Cookie settings – decide at runtime if Secure flag is needed
  *********************************************************************/
-ini_set('session.cookie_secure', 1);        // HTTPS only
-ini_set('session.cookie_httponly', 1);      // not accessible via JS
+$overTls = (
+    (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+    || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443)
+);
+ini_set('session.cookie_secure',  $overTls ? 1 : 0);   // only HTTPS → Secure
+ini_set('session.cookie_httponly', 1);                 // not accessible via JS
 ini_set('session.cookie_samesite', 'Strict');
 
 session_name('axialy_admin_session');
@@ -19,7 +22,7 @@ use Axialy\AdminConfig\AdminDBConfig;
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
-$csrfToken   = $_SESSION['csrf_token'];
+$csrfToken    = $_SESSION['csrf_token'];
 $errorMessage = '';
 
 /** ------------------------------------------------------------------
@@ -97,68 +100,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <meta charset="UTF-8">
   <title>Axialy Admin Login</title>
   <style>
-    body {
-      font-family: sans-serif;
-      background: #f4f4f4;
-      margin: 0;
-      padding: 0;
-    }
-    .header {
-      background: #fff;
-      padding: 15px;
-      border-bottom: 1px solid #ddd;
-      text-align: center;
-    }
-    .header img {
-      height: 50px;
-    }
-    .login-container {
-      max-width: 400px;
-      margin: 40px auto;
-      background: #fff;
-      padding: 20px;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-    }
-    h2 {
-      margin-top: 0;
-      text-align: center;
-    }
-    .error {
-      color: red;
-      margin-bottom: 1em;
-      text-align: center;
-    }
-    label {
-      display: block;
-      margin-top: 1em;
-      font-weight: bold;
-    }
-    input[type="text"],
-    input[type="password"] {
-      width: 100%;
-      padding: 8px;
-      box-sizing: border-box;
-      margin-top: 4px;
-    }
-    button {
-      margin-top: 1.5em;
-      padding: 10px 20px;
-      cursor: pointer;
-      width: 100%;
-      background: #007BFF;
-      color: #fff;
-      border: none;
-      border-radius: 4px;
-      font-size: 16px;
-    }
-    button:hover {
-      background: #0056b3;
-    }
-    /* Responsive breakpoint */
-    @media (max-width: 768px) {
-      body { flex-direction: column; height: auto; }
-    }
+    body {font-family:sans-serif;background:#f4f4f4;margin:0;padding:0;}
+    .header {background:#fff;padding:15px;border-bottom:1px solid #ddd;text-align:center;}
+    .header img {height:50px;}
+    .login-container {max-width:400px;margin:40px auto;background:#fff;padding:20px;
+                      border:1px solid #ccc;border-radius:6px;}
+    h2 {margin-top:0;text-align:center;}
+    .error {color:red;margin-bottom:1em;text-align:center;}
+    label {display:block;margin-top:1em;font-weight:bold;}
+    input[type="text"],input[type="password"] {width:100%;padding:8px;box-sizing:border-box;margin-top:4px;}
+    button {margin-top:1.5em;padding:10px 20px;cursor:pointer;width:100%;
+            background:#007BFF;color:#fff;border:none;border-radius:4px;font-size:16px;}
+    button:hover {background:#0056b3;}
+    @media (max-width:768px){body{flex-direction:column;height:auto;}}
   </style>
 </head>
 <body>
