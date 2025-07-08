@@ -2,7 +2,7 @@
 /**
  *  Axialy Admin – UI-database connection
  *  --------------------------------------------------------------------------
- *  This helper builds a PDO connection to the Axialy_UI database that lives
+ *  This helper builds a PDO connection to the axialy_ui database that lives
  *  in the **selected environment** (production / beta / test / …).  
  *
  *  ► Primary mechanism – container/Ansible exports
@@ -31,7 +31,7 @@ $env   = preg_replace('/[^A-Za-z0-9_\-]/', '', $env);   // simple hardening
  * ------------------------------------------------------------------------*/
 $host = getenv('UI_DB_HOST') ?: '';
 $port = getenv('UI_DB_PORT') ?: '3306';
-$db   = getenv('UI_DB_NAME') ?: 'Axialy_UI';
+$db   = getenv('UI_DB_NAME') ?: 'axialy_ui';
 $user = getenv('UI_DB_USER') ?: '';
 $pass = getenv('UI_DB_PASSWORD') ?: '';
 
