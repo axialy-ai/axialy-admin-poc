@@ -49,7 +49,7 @@ if (!$caseyExists) {
     </head>
     <body>
       <div class="header">
-        <img src="https://axialy.com/assets/img/product_logo.png" alt="Axialy Logo">
+        <img src="https://axiaba.com/assets/img/product_logo.png" alt="Axialy Logo">
       </div>
       <div class="overlay">
         <div class="overlay-content">
@@ -68,7 +68,7 @@ if (!$caseyExists) {
         const btnExit    = document.getElementById('btnExit');
 
         btnEnter.addEventListener('click', () => {
-          window.location.href = 'https://www.axialy.com';
+          window.location.href = 'https://www.axiaba.com';
         });
 
         btnExit.addEventListener('click', async () => {
@@ -122,16 +122,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['env_select'])) {
 $env = $_SESSION['admin_env'] ?? 'production';
 
 $mapping = [
-    'production' => 'https://app.axialy.com',
-    'clients'    => 'https://clients.axialy.com',
-    'beta'       => 'https://beta.axialy.com',
-    'test'       => 'https://app-test.axialy.com',
-    'uat'        => 'https://app-uat.axialy.com',
-    'firstlook'  => 'https://firstlook.axialy.com',
-    'aii'        => 'https://aii.axialy.com',
+    'production' => 'https://app.axiaba.com',
+    'clients'    => 'https://clients.axiaba.com',
+    'beta'       => 'https://beta.axiaba.com',
+    'test'       => 'https://app-test.axiaba.com',
+    'uat'        => 'https://app-uat.axiaba.com',
+    'firstlook'  => 'https://firstlook.axiaba.com',
+    'aii'        => 'https://aii.axiaba.com',
 ];
 
-$uiUrl = $mapping[$env] ?? 'https://app.axialy.com';
+$uiUrl = $mapping[$env] ?? 'https://app.axiaba.com';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -160,7 +160,7 @@ $uiUrl = $mapping[$env] ?? 'https://app.axialy.com';
 <body>
   <div class="header">
     <div class="header-left">
-      <img src="https://axialy.com/assets/img/SOI.png" alt="Axialy Logo">
+      <img src="https://axiaba.com/assets/img/SOI.png" alt="Axialy Logo">
       <h1>Axialy Admin</h1>
     </div>
     <div>
