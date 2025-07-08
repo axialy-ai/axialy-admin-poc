@@ -19,7 +19,7 @@ SET SESSION sql_require_primary_key = 0;
 /*!40101 SET NAMES utf8mb4 */;
 
 --
--- Database: `Axialy_UI`
+-- Database: `axialy_ui`
 --
 
 -- --------------------------------------------------------
