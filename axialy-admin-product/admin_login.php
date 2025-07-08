@@ -1,15 +1,11 @@
 <?php
+
 /*********************************************************************
- *  Cookie settings – make “Secure” conditional so the site works
- *  over raw-IP HTTP as well as HTTPS.
+ *  Hard-en cookie settings *before* the session is created
  *********************************************************************/
-$overTls = (
-    (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
-    (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443)
-);
-ini_set('session.cookie_secure',  $overTls ? 1 : 0);   // only HTTPS → Secure
-ini_set('session.cookie_httponly', 1);                 // JS can’t read it
-ini_set('session.cookie_samesite', 'Strict');          // keep legacy value
+ini_set('session.cookie_secure', 1);        // HTTPS only
+ini_set('session.cookie_httponly', 1);      // not accessible via JS
+ini_set('session.cookie_samesite', 'Strict');
 
 session_name('axialy_admin_session');
 session_start();
