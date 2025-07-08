@@ -558,4 +558,97 @@ CREATE TABLE IF NOT EXISTS `stakeholder_general_feedback` (
     REFERENCES `analysis_package_headers` (`id`) 
     ON DELETE SET NULL 
     ON UPDATE CASCADE,
-  CONSTRAINT `fk_sgf_focus_areas`
+  CONSTRAINT `fk_sgf_focus_areas` 
+    FOREIGN KEY (`analysis_package_focus_areas_id`) 
+    REFERENCES `analysis_package_focus_areas` (`id`) 
+    ON DELETE SET NULL 
+    ON UPDATE CASCADE,
+  CONSTRAINT `fk_sgf_versions` 
+    FOREIGN KEY (`analysis_package_focus_area_versions_id`) 
+    REFERENCES `analysis_package_focus_area_versions` (`id`) 
+    ON DELETE CASCADE 
+    ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+-- Table: stakeholder_itemized_feedback
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `stakeholder_itemized_feedback` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `stakeholder_feedback_headers_id` INT NOT NULL,
+  `analysis_package_headers_id` INT UNSIGNED NOT NULL,
+  `analysis_package_focus_areas_id` INT UNSIGNED NOT NULL,
+  `analysis_package_focus_area_versions_id` INT UNSIGNED NOT NULL,
+  `grid_index` INT NOT NULL,
+  `feedback_item_response` VARCHAR(255) NOT NULL,
+  `stakeholder_feedback_text` TEXT DEFAULT NULL,
+  `resolved_action` VARCHAR(255) DEFAULT NULL,
+  `resolved_at` TIMESTAMP NULL DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_sfh_id` (`stakeholder_feedback_headers_id`),
+  KEY `idx_aph_id` (`analysis_package_headers_id`),
+  KEY `idx_apfa_id` (`analysis_package_focus_areas_id`),
+  KEY `idx_apfav_id` (`analysis_package_focus_area_versions_id`),
+  KEY `idx_grid_index` (`grid_index`),
+  KEY `idx_resolved_at` (`resolved_at`),
+  CONSTRAINT `fk_sif_headers` 
+    FOREIGN KEY (`stakeholder_feedback_headers_id`) 
+    REFERENCES `stakeholder_feedback_headers` (`id`) 
+    ON DELETE CASCADE 
+    ON UPDATE CASCADE,
+  CONSTRAINT `fk_sif_aph` 
+    FOREIGN KEY (`analysis_package_headers_id`) 
+    REFERENCES `analysis_package_headers` (`id`) 
+    ON DELETE CASCADE 
+    ON UPDATE CASCADE,
+  CONSTRAINT `fk_sif_focus_areas` 
+    FOREIGN KEY (`analysis_package_focus_areas_id`) 
+    REFERENCES `analysis_package_focus_areas` (`id`) 
+    ON DELETE CASCADE 
+    ON UPDATE CASCADE,
+  CONSTRAINT `fk_sif_versions` 
+    FOREIGN KEY (`analysis_package_focus_area_versions_id`) 
+    REFERENCES `analysis_package_focus_area_versions` (`id`) 
+    ON DELETE CASCADE 
+    ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+-- Table: stakeholder_experience_feedback
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `stakeholder_experience_feedback` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `stakeholder_feedback_details_id` INT NOT NULL,
+  `feedback_text` TEXT NOT NULL,
+  `experience_feedback_text` TEXT NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_sfd_id` (`stakeholder_feedback_details_id`),
+  CONSTRAINT `fk_sef_general_feedback` 
+    FOREIGN KEY (`stakeholder_feedback_details_id`) 
+    REFERENCES `stakeholder_general_feedback` (`id`) 
+    ON DELETE CASCADE 
+    ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+-- Table: stakeholder_sessions
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `stakeholder_sessions` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `stakeholder_feedback_headers_id` INT NOT NULL,
+  `session_token` VARCHAR(255) NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_sfh_id` (`stakeholder_feedback_headers_id`),
+  KEY `idx_session_token` (`session_token`),
+  CONSTRAINT `fk_ss_headers` 
+    FOREIGN KEY (`stakeholder_feedback_headers_id`) 
+    REFERENCES `stakeholder_feedback_headers` (`id`) 
+    ON DELETE CASCADE 
+    ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Re-enable foreign key checks
+SET FOREIGN_KEY_CHECKS = 1;
