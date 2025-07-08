@@ -160,7 +160,7 @@ $uiUrl = $mapping[$env] ?? 'https://app.axialy.com';
 <body>
   <div class="header">
     <div class="header-left">
-      <img src="https://axialy.com/assets/img/SOI.png" alt="Axialy Logo">
+      <img src="https://axiaba.com/assets/img/SOI.png" alt="Axialy Logo">
       <h1>Axialy Admin</h1>
     </div>
     <div>
