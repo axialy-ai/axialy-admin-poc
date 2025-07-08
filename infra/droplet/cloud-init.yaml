@@ -15,6 +15,7 @@ packages:
 
 write_files:
   - path: /etc/environment
+    append: true
     content: |
       DB_HOST="${db_host}"
       DB_PORT="${db_port}"
@@ -31,27 +32,28 @@ write_files:
       ADMIN_DEFAULT_USER="${admin_default_user}"
       ADMIN_DEFAULT_EMAIL="${admin_default_email}"
       ADMIN_DEFAULT_PASSWORD="${admin_default_password}"
-    append: true
 
 runcmd:
-  # 1. Harden firewall
+  # 1. firewall
   - ufw allow 22/tcp
   - ufw allow 80/tcp
   - ufw allow 443/tcp
   - ufw --force enable
 
-  # 2. PHP hardening – disable cgi.fix_pathinfo
+  # 2. PHP hardening
   - sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
 
-  # 3. GLOBAL session-directory permission fix
+  # 3. session dir permissions
   - chown root:www-data /var/lib/php/sessions
   - chmod 1730          /var/lib/php/sessions
 
-  # 4. restart services so FPM picks up the change
+  # 4. make sure services auto-start
+  - systemctl enable php8.1-fpm
+  - systemctl enable nginx
   - systemctl restart php8.1-fpm
   - systemctl restart nginx
 
-  # 5. Prepare web root
+  # 5. prep web root so nginx doesn’t choke
   - mkdir -p /var/www/axialy-admin
   - chown -R www-data:www-data /var/www/axialy-admin
   - find /var/www/axialy-admin -type d -exec chmod 755 {} \;
