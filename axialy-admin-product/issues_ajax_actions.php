@@ -7,7 +7,7 @@ requireAdminAuth();
 header('Content-Type: application/json');
 require_once __DIR__ . '/includes/db_connection.php';
 
-// For retrieving Admin info from Axialy_ADMIN
+// For retrieving Admin info from axialy_admin
 // (If your admin_auth logic doesn't store the email in session, we'll fetch from admin_users)
 require_once __DIR__ . '/includes/AdminDBConfig.php';
 use Axialy\AdminConfig\AdminDBConfig;
@@ -131,7 +131,7 @@ function sendEmail(PDO $pdo) {
     }
 
     // 2) Get the Admin's "from" email from session
-    // We'll do a quick fetch from Axialy_ADMIN to get the logged in admin's email.
+    // We'll do a quick fetch from axialy_admin to get the logged in admin's email.
     $adminUserId = $_SESSION['admin_user_id'] ?? 0;
     if (!$adminUserId) {
         echo json_encode(['success'=>false,'message'=>'No admin user in session.']);
