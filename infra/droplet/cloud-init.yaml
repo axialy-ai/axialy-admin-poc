@@ -1,6 +1,8 @@
+# infra/droplet/cloud-init.yaml
 #cloud-config
 package_update: true
 package_upgrade: true
+
 packages:
   - nginx
   - php8.1-fpm
@@ -14,6 +16,7 @@ packages:
   - ufw
 
 write_files:
+  # ── env vars used by the PHP code ───────────────────────────────
   - path: /etc/environment
     append: true
     content: |
@@ -33,6 +36,35 @@ write_files:
       ADMIN_DEFAULT_EMAIL=${admin_default_email}
       ADMIN_DEFAULT_PASSWORD=${admin_default_password}
 
+  # ── nginx vhost that serves /var/www/axialy-admin ───────────────
+  - path: /etc/nginx/sites-available/axialy-admin.conf
+    permissions: "0644"
+    content: |
+      server {
+          listen 80 default_server;
+          listen [::]:80 default_server;
+          server_name _;
+
+          root /var/www/axialy-admin;
+          index index.php;
+          client_max_body_size 16M;
+
+          location / {
+              try_files $uri $uri/ /index.php?$query_string;
+          }
+
+          location ~ \.php$ {
+              include               fastcgi_params;
+              fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_pass          unix:/run/php/php8.1-fpm.sock;
+          }
+
+          location ~* \.(jpg|jpeg|png|gif|ico|css|js)$ {
+              expires 30d;
+              access_log off;
+          }
+      }
+
 runcmd:
   # 1. firewall
   - ufw allow 22/tcp
@@ -47,13 +79,19 @@ runcmd:
   - chown root:www-data /var/lib/php/sessions
   - chmod 1730          /var/lib/php/sessions
 
-  # 4. make sure services auto-start
+  # 4. ensure services auto-start
   - systemctl enable php8.1-fpm
   - systemctl enable nginx
   - systemctl restart php8.1-fpm
   - systemctl restart nginx
 
-  # 5. prep web root so nginx doesn’t choke
+  # 5. web-root for the app (upload happens later via deploy.sh)
   - mkdir -p /var/www/axialy-admin
   - chown -R www-data:www-data /var/www/axialy-admin
   - find /var/www/axialy-admin -type d -exec chmod 755 {} \;
+
+  # 6. enable our vhost, disable the default, reload nginx
+  - ln -sf /etc/nginx/sites-available/axialy-admin.conf /etc/nginx/sites-enabled/axialy-admin.conf
+  - rm -f /etc/nginx/sites-enabled/default
+  - nginx -t
+  - systemctl reload nginx
