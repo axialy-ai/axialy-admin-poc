@@ -1,4 +1,4 @@
-name: Axialy Admin UI
+name: Axialy Admin UI          # ✦ keeps your original workflow name
 
 on:
   workflow_dispatch:
@@ -19,21 +19,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1 ▸ checkout
-    - uses: actions/checkout@v4
+    # ──────────────────────────────────────────────────────────
+    # 1. Code checkout
+    # ──────────────────────────────────────────────────────────
+    - name: ⬇️  Checkout repository
+      uses: actions/checkout@v4
 
-    # 2 ▸ terraform
-    - uses: hashicorp/setup-terraform@v3
+    # ──────────────────────────────────────────────────────────
+    # 2. Terraform – create / update droplet
+    # ──────────────────────────────────────────────────────────
+    - name: ⚙️  Setup Terraform
+      uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: 1.6.6
         terraform_wrapper: false
 
-    - name: Terraform init
+    - name: 🧩 terraform init (droplet)
       working-directory: infra/droplet
       env: { TF_VAR_do_token: ${{ secrets.DO_PAT }} }
       run: terraform init -input=false
 
-    - name: Terraform apply
+    - name: 🚀 terraform apply (droplet)
       id: tfout
       working-directory: infra/droplet
       env: { TF_VAR_do_token: ${{ secrets.DO_PAT }} }
@@ -53,12 +59,16 @@ jobs:
 
         echo "droplet_ip=$(terraform output -raw droplet_ip)"  >> "$GITHUB_OUTPUT"
 
-    # 3 ▸ wait a little longer – DO often needs >60 s to hand off SSH
-    - name: ⏳ Allow droplet to finish booting
+    # ──────────────────────────────────────────────────────────
+    # 3. Wait *longer* – DO needs 90-120 s until SSH is ready
+    # ──────────────────────────────────────────────────────────
+    - name: ⏳ Waiting for droplet cloud-init
       run: sleep 120
 
-    # 4 ▸ SSH helpers
-    - name: Prepare SSH helpers
+    # ──────────────────────────────────────────────────────────
+    # 4. Build SSH helpers (expect)
+    # ──────────────────────────────────────────────────────────
+    - name: 🔑 Prepare SSH helpers
       run: |
         mkdir -p ~/.ssh && chmod 700 ~/.ssh
         echo "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/deploy_key
@@ -66,57 +76,45 @@ jobs:
         ssh-keyscan -H ${{ steps.tfout.outputs.droplet_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
         sudo apt-get update -qq && sudo apt-get install -y expect
 
-        cat > ssh_with_pass.exp <<'EOF'
+        cat > ssh.exp <<'EOF'
         #!/usr/bin/expect -f
         set timeout 900
-        set key  [lindex $argv 0]
-        set host [lindex $argv 1]
-        set pass [lindex $argv 2]
-        set cmd  [lindex $argv 3]
+        set key  [lindex $argv 0]; set host [lindex $argv 1]
+        set pass [lindex $argv 2]; set cmd  [lindex $argv 3]
         spawn ssh -i $key -o StrictHostKeyChecking=no root@$host $cmd
-        expect {
-          "Enter passphrase for key*" { send "$pass\r"; exp_continue }
-          eof
-        }
+        expect { "Enter passphrase for key*" {send "$pass\r"; exp_continue} eof }
         EOF
-        chmod +x ssh_with_pass.exp
+        chmod +x ssh.exp
 
-        cat > scp_with_pass.exp <<'EOF'
+        cat > scp.exp <<'EOF'
         #!/usr/bin/expect -f
         set timeout 900
-        set key  [lindex $argv 0]
-        set src  [lindex $argv 1]
-        set dst  [lindex $argv 2]
-        set pass [lindex $argv 3]
+        set key [lindex $argv 0]; set src [lindex $argv 1]
+        set dst [lindex $argv 2]; set pass [lindex $argv 3]
         spawn scp -i $key -o StrictHostKeyChecking=no $src $dst
-        expect {
-          "Enter passphrase for key*" { send "$pass\r"; exp_continue }
-          eof
-        }
+        expect { "Enter passphrase for key*" {send "$pass\r"; exp_continue} eof }
         EOF
-        chmod +x scp_with_pass.exp
+        chmod +x scp.exp
 
-    # 5 ▸ deployment script copied & executed on the droplet
-    - name: Push and run deploy.sh
-      env:
-        IP:  ${{ steps.tfout.outputs.droplet_ip }}
-        PPH: ${{ secrets.DROPLET_SSH_PASSPHRASE }}
+    # ──────────────────────────────────────────────────────────
+    # 5. Provision nginx + PHP-FPM in *one* script
+    # ──────────────────────────────────────────────────────────
+    - name: 📦 Push & run deploy.sh
+      env: { IP: ${{ steps.tfout.outputs.droplet_ip }},
+             PPH: ${{ secrets.DROPLET_SSH_PASSPHRASE }} }
       run: |
         cat > deploy.sh <<'DEPLOY'
         #!/usr/bin/env bash
         set -euo pipefail
         export DEBIAN_FRONTEND=noninteractive
 
-        echo "◼︎ installing nginx + PHP-FPM"
         apt-get update -qq
         apt-get install -y nginx php8.1-fpm php8.1-mysql \
                            php8.1-mbstring php8.1-xml php8.1-curl \
                            php8.1-zip php8.1-gd ufw
 
-        echo "◼︎ hardening PHP"
         sed -i 's@;cgi.fix_pathinfo=1@cgi.fix_pathinfo=0@' /etc/php/8.1/fpm/php.ini
 
-        echo "◼︎ nginx vhost"
         cat > /etc/nginx/sites-available/axialy-admin <<'CONF'
         server {
           listen 80 default_server;
@@ -124,22 +122,20 @@ jobs:
           server_name _;
           root /var/www/axialy-admin;
           index index.php;
-
-          location /        { try_files $uri $uri/ /index.php?$query_string; }
+          location / { try_files $uri $uri/ /index.php?$query_string; }
           location ~ \.php$ {
             include snippets/fastcgi-php.conf;
             fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
           }
-          location ~ /\.  { deny all; }
+          location ~ /\. { deny all; }
           add_header X-Frame-Options "SAMEORIGIN";
           add_header X-Content-Type-Options "nosniff";
           add_header X-XSS-Protection "1; mode=block";
         }
         CONF
         ln -sf /etc/nginx/sites-available/axialy-admin /etc/nginx/sites-enabled/
-        rm -f /etc/nginx/sites-enabled/default
+        rm -f  /etc/nginx/sites-enabled/default
 
-        echo "◼︎ firewall"
         ufw --force reset
         ufw --force default deny incoming
         ufw --force default allow outgoing
@@ -148,83 +144,77 @@ jobs:
         ufw --force allow 443
         ufw --force enable
 
-        echo "◼︎ enable + restart services"
         systemctl enable nginx php8.1-fpm
         nginx -t
         systemctl restart php8.1-fpm nginx
         DEPLOY
 
-        # copy + execute
-        ./scp_with_pass.exp ~/.ssh/deploy_key deploy.sh           root@$IP:/tmp/deploy.sh $PPH
-        ./ssh_with_pass.exp ~/.ssh/deploy_key $IP $PPH "bash /tmp/deploy.sh"
+        ./scp.exp ~/.ssh/deploy_key deploy.sh root@$IP:/tmp/deploy.sh $PPH
+        ./ssh.exp ~/.ssh/deploy_key $IP $PPH "bash /tmp/deploy.sh"
 
-    # 6 ▸ ship application code
-    - name: Ship code
-      env:
-        IP:  ${{ steps.tfout.outputs.droplet_ip }}
-        PPH: ${{ secrets.DROPLET_SSH_PASSPHRASE }}
+    # ──────────────────────────────────────────────────────────
+    # 6. Ship application code and .env
+    # ──────────────────────────────────────────────────────────
+    - name: 🚚 Transfer codebase
+      env: { IP: ${{ steps.tfout.outputs.droplet_ip }},
+             PPH: ${{ secrets.DROPLET_SSH_PASSPHRASE }} }
       run: |
         tar -czf axialy-admin.tar.gz -C axialy-admin-product .
-        ./scp_with_pass.exp ~/.ssh/deploy_key axialy-admin.tar.gz root@$IP:/tmp/ $PPH
-        ./ssh_with_pass.exp ~/.ssh/deploy_key $IP $PPH "
+        ./scp.exp ~/.ssh/deploy_key axialy-admin.tar.gz root@$IP:/tmp/ $PPH
+        ./ssh.exp ~/.ssh/deploy_key $IP $PPH "
             mkdir -p /var/www/axialy-admin &&
             tar -xzf /tmp/axialy-admin.tar.gz -C /var/www/axialy-admin &&
             chown -R www-data:www-data /var/www/axialy-admin &&
             find /var/www/axialy-admin -type d -exec chmod 755 {} \; &&
             find /var/www/axialy-admin -type f -exec chmod 644 {} \;"
 
-    # 7 ▸ copy .env
-    - name: Push .env
-      env:
-        IP:  ${{ steps.tfout.outputs.droplet_ip }}
-        PPH: ${{ secrets.DROPLET_SSH_PASSPHRASE }}
-      run: |
         cat > .env <<EOF
-        # Axialy Admin DB
         DB_HOST=${{ secrets.DB_HOST }}
         DB_PORT=${{ secrets.DB_PORT }}
         DB_NAME=axialy_admin
         DB_USER=${{ secrets.DB_USER }}
         DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-
-        # Axialy UI DB
         UI_DB_HOST=${{ secrets.DB_HOST }}
         UI_DB_PORT=${{ secrets.DB_PORT }}
         UI_DB_NAME=axialy_ui
         UI_DB_USER=${{ secrets.DB_USER }}
         UI_DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-
-        # Admin defaults
         ADMIN_DEFAULT_USER=${{ secrets.ADMIN_DEFAULT_USER }}
         ADMIN_DEFAULT_EMAIL=${{ secrets.ADMIN_DEFAULT_EMAIL }}
         ADMIN_DEFAULT_PASSWORD=${{ secrets.ADMIN_DEFAULT_PASSWORD }}
         EOF
 
-        ./scp_with_pass.exp ~/.ssh/deploy_key .env root@$IP:/var/www/axialy-admin/.env $PPH
-        ./ssh_with_pass.exp ~/.ssh/deploy_key $IP $PPH "
+        ./scp.exp ~/.ssh/deploy_key .env root@$IP:/var/www/axialy-admin/.env $PPH
+        ./ssh.exp ~/.ssh/deploy_key $IP $PPH "
             chown www-data:www-data /var/www/axialy-admin/.env &&
             chmod 640 /var/www/axialy-admin/.env"
 
-    # 8 ▸ health-check – wait up to 10 min for nginx
-    - name: Verify deployment
+    # ──────────────────────────────────────────────────────────
+    # 7. Health-check (5 min max, spinner every 5 s)
+    # ──────────────────────────────────────────────────────────
+    - name: 🔍 Verify nginx is serving admin_login.php
       env:
         IP: ${{ steps.tfout.outputs.droplet_ip }}
+        PPH: ${{ secrets.DROPLET_SSH_PASSPHRASE }}
       run: |
-        for i in {1..120}; do
-          CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://$IP/admin_login.php" || true)
-          if [[ "$CODE" =~ ^(200|302|403|404)$ ]]; then
-            echo "✅ nginx is answering (HTTP $CODE)"
-            exit 0
-          fi
-          echo -n "⏳ Waiting for nginx to answer (attempt $i/120)… "
+        TIMEOUT=60   # ×5 s = 5 min
+        for i in $(seq 1 $TIMEOUT); do
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' http://$IP/admin_login.php || true)
+          [[ "$CODE" =~ ^(200|302)$ ]] && { echo "✅ nginx answered (HTTP $CODE)"; exit 0; }
+          printf "\r⏳ Waiting for nginx… %s/%s " "$i" "$TIMEOUT"
           sleep 5
         done
-        echo "::error:: nginx never answered within 10 minutes."
+        echo -e "\n🚑 nginx still not responding – printing logs:"
+        ./ssh.exp ~/.ssh/deploy_key $IP $PPH "systemctl -n 50 status nginx || true"
+        ./ssh.exp ~/.ssh/deploy_key $IP $PPH "tail -n 50 /var/log/nginx/error.log || true"
         exit 1
 
-    # 9 ▸ summary
-    - name: Complete
+    # ──────────────────────────────────────────────────────────
+    # 8. Success banner
+    # ──────────────────────────────────────────────────────────
+    - name: 🎉 Deployment finished
+      if: success()
       run: |
-        echo "================================================="
+        echo "==============================================================="
         echo " Axialy Admin is live ➜ http://${{ steps.tfout.outputs.droplet_ip }}/admin_login.php"
-        echo "================================================="
+        echo "==============================================================="
