@@ -39,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errorMessage = 'Please enter your username and password.';
         } else {
             try {
-                // Connect to Axialy_ADMIN
+                // Connect to axialy_admin
                 $adminDB = AdminDBConfig::getInstance()->getPdo();
 
                 // Lookup admin user
