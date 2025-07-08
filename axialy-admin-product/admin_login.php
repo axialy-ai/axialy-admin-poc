@@ -1,11 +1,18 @@
 <?php
 
 /*********************************************************************
- *  Hard-en cookie settings *before* the session is created
+ *  Configure cookie settings based on protocol
  *********************************************************************/
-ini_set('session.cookie_secure', 1);        // HTTPS only
+$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || 
+           $_SERVER['SERVER_PORT'] == 443 ||
+           (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] == 'https');
+
+// Only set secure flag if actually using HTTPS
+if ($isHttps) {
+    ini_set('session.cookie_secure', 1);
+}
 ini_set('session.cookie_httponly', 1);      // not accessible via JS
-ini_set('session.cookie_samesite', 'Strict');
+ini_set('session.cookie_samesite', 'Lax');  // Changed from 'Strict' to 'Lax' for better compatibility
 
 session_name('axialy_admin_session');
 session_start();
@@ -28,8 +35,17 @@ $errorMessage = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     /* ---- CSRF validation ----------------------------------------- */
-    if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
+    $submittedToken = $_POST['csrf_token'] ?? '';
+    
+    // Debug logging (remove in production)
+    error_log("Session CSRF: " . $_SESSION['csrf_token']);
+    error_log("Submitted CSRF: " . $submittedToken);
+    
+    if (empty($submittedToken) || !hash_equals($_SESSION['csrf_token'], $submittedToken)) {
         $errorMessage = 'Invalid session. Please refresh and try again.';
+        // Regenerate token after failed attempt
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        $csrfToken = $_SESSION['csrf_token'];
     } else {
 
         $username = trim($_POST['username'] ?? '');
@@ -95,6 +111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Axialy Admin Login</title>
   <style>
     body {
