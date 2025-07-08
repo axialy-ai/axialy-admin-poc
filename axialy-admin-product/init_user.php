@@ -27,28 +27,13 @@ try {
     // Insert the user with password 'Casellio'
     $hashed = password_hash('Casellio', PASSWORD_BCRYPT);
 
-    // Debug: Log the hash being created
-    error_log("Creating user caseylide with hash: " . $hashed);
-
     $ins = $adminDB->prepare("
         INSERT INTO admin_users (username, password, email, is_active, is_sys_admin, created_at)
         VALUES ('caseylide', :pass, 'caseylide@gmail.com', 1, 1, NOW())
     ");
     $ins->execute([':pass' => $hashed]);
 
-    // Verify the user was created
-    $verify = $adminDB->prepare("SELECT id, username, password, is_active, is_sys_admin FROM admin_users WHERE username = 'caseylide'");
-    $verify->execute();
-    $newUser = $verify->fetch(\PDO::FETCH_ASSOC);
-    
-    if ($newUser) {
-        error_log("User created successfully: " . json_encode($newUser));
-        echo json_encode(['success' => true, 'debug' => 'User created with ID: ' . $newUser['id']]);
-    } else {
-        echo json_encode(['success' => false, 'message' => 'User creation verification failed']);
-    }
-
+    echo json_encode(['success' => true]);
 } catch (\Exception $ex) {
-    error_log("Init user error: " . $ex->getMessage());
     echo json_encode(['success' => false, 'message' => $ex->getMessage()]);
 }
