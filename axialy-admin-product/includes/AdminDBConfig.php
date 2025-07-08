@@ -1,11 +1,11 @@
 <?php
 /**
- * Axialy Admin – central DB connection / config helper (v3 - 2025-07-07)
+ * Axialy Admin – central DB connection / config helper      v4 (2025-07-08)
  *
- *  • Creates required tables automatically on an empty database so the first
- *    browser hit doesn’t explode with “table not found”.
- *  • **Does NOT pre-seed any rows** – the original bootstrap flow
- *      index.php → init_user.php  still runs.
+ * • Aligns ensureSchema() 1-for-1 with the authoritative schema in
+ *   db/axialy_admin.sql so we never diverge in production.
+ * • Still auto-creates the two admin_* tables when the DB is pristine
+ *   (handy in local-dev or ephemeral review apps).
  */
 
 namespace Axialy\AdminConfig;
@@ -15,7 +15,7 @@ use RuntimeException;
 
 final class AdminDBConfig
 {
-    private const REQUIRED_VARS = ['DB_HOST','DB_USER','DB_PASSWORD'];
+    private const REQUIRED_VARS = ['DB_HOST', 'DB_USER', 'DB_PASSWORD'];
 
     private static ?self $instance = null;
 
@@ -26,10 +26,11 @@ final class AdminDBConfig
     private string $nameAdmin;
     private string $nameUI;
 
-    /** @var PDO[] lazy PDO pool  */
+    /** @var PDO[] keyed by DB-name */
     private array $pdoPool = [];
 
-    /* ──────────────────────────────────────────────────────────────── */
+    /* ────────────────────────── singleton ───────────────────────── */
+
     public static function getInstance(): self
     {
         return self::$instance ??= new self();
@@ -41,7 +42,7 @@ final class AdminDBConfig
 
         foreach (self::REQUIRED_VARS as $k) {
             if (getenv($k) === false) {
-                throw new RuntimeException('Missing DB_* environment variables.');
+                throw new RuntimeException("Missing required env var: {$k}");
             }
         }
 
@@ -49,11 +50,12 @@ final class AdminDBConfig
         $this->user      = getenv('DB_USER');
         $this->password  = getenv('DB_PASSWORD');
         $this->port      = getenv('DB_PORT') ?: '3306';
-        $this->nameAdmin = getenv('DB_NAME')     ?: 'axialy_admin';
-        $this->nameUI    = getenv('UI_DB_NAME')  ?: 'axialy_ui';
+        $this->nameAdmin = getenv('DB_NAME')    ?: 'axialy_admin';
+        $this->nameUI    = getenv('UI_DB_NAME') ?: 'axialy_ui';
     }
 
-    /* ───────────────────────── public helpers ────────────────────── */
+    /* ───────────────────────── public API ──────────────────────── */
+
     public function getPdo()   : PDO { return $this->getPdoFor($this->nameAdmin); }
     public function getPdoUI() : PDO { return $this->getPdoFor($this->nameUI);   }
 
@@ -62,7 +64,9 @@ final class AdminDBConfig
         if (!isset($this->pdoPool[$dbName])) {
             $dsn = sprintf(
                 'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
-                $this->host, $this->port, $dbName
+                $this->host,
+                $this->port,
+                $dbName
             );
 
             $pdo = new PDO(
@@ -76,57 +80,89 @@ final class AdminDBConfig
             );
 
             if ($dbName === $this->nameAdmin) {
-                $this->ensureSchema($pdo);          // ← new
+                $this->ensureSchema($pdo);
             }
+
             $this->pdoPool[$dbName] = $pdo;
         }
         return $this->pdoPool[$dbName];
     }
 
-    /* ─────────────────────── internal helpers ────────────────────── */
-    /** Creates the two admin_* tables when they aren’t present. */
+    /* ────────────────────── internal helpers ───────────────────── */
+
+    /**
+     * Creates the two admin_* tables exactly as defined in db/axialy_admin.sql
+     * when they are missing (first run on a pristine database).
+     */
     private function ensureSchema(PDO $pdo): void
     {
         $pdo->exec("CREATE TABLE IF NOT EXISTS admin_users (
-            id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            username    VARCHAR(100) NOT NULL UNIQUE,
-            password    VARCHAR(255) NOT NULL,
-            email       VARCHAR(255) NULL,
-            is_active   TINYINT(1) NOT NULL DEFAULT 1,
-            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+            id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            username     VARCHAR(50)  NOT NULL,
+            password     VARCHAR(255) NOT NULL,
+            email        VARCHAR(255) NOT NULL,
+            is_active    TINYINT(1)   NOT NULL DEFAULT 1,
+            is_sys_admin TINYINT(1)   NOT NULL DEFAULT 1,
+            created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at   DATETIME              DEFAULT NULL
+                                        ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_admin_users_username (username)
+        ) ENGINE=InnoDB
+          DEFAULT CHARSET=utf8mb4
+          COLLATE=utf8mb4_unicode_ci");
 
         $pdo->exec("CREATE TABLE IF NOT EXISTS admin_user_sessions (
-            id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
             admin_user_id INT UNSIGNED NOT NULL,
-            session_token CHAR(64) NOT NULL,
-            created_at    DATETIME NOT NULL,
-            expires_at    DATETIME NOT NULL,
-            INDEX(session_token),
-            CONSTRAINT fk_admin_sessions_user
-                FOREIGN KEY (admin_user_id) REFERENCES admin_users(id)
-                ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+            session_token CHAR(64)     NOT NULL,
+            created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at    DATETIME     NOT NULL,
+            PRIMARY KEY (id),
+            KEY idx_admin_user_sessions_user (admin_user_id),
+            CONSTRAINT fk_admin_user_sessions_user
+              FOREIGN KEY (admin_user_id)
+              REFERENCES admin_users(id)
+              ON DELETE CASCADE
+              ON UPDATE CASCADE
+        ) ENGINE=InnoDB
+          DEFAULT CHARSET=utf8mb4
+          COLLATE=utf8mb4_unicode_ci");
     }
 
-    /** Loads .env once if any required var is absent. */
+    /**
+     * Local-dev convenience: load a “.env” from the project root if any
+     * required var is still missing.
+     */
     private function bootstrapEnvIfNeeded(): void
     {
         foreach (self::REQUIRED_VARS as $v) {
-            if (getenv($v) === false) {
-                $env = dirname(__DIR__,1).'/.env';
-                if (!is_file($env)) return;
-                foreach (file($env, FILE_IGNORE_NEW_LINES|FILE_SKIP_EMPTY_LINES) as $line) {
-                    if ($line[0]==='#' || !str_contains($line,'=')) continue;
-                    [$k,$val] = array_map('trim', explode('=', $line, 2));
-                    if ($k && getenv($k)===false) {
-                        putenv("$k=$val");
-                        $_ENV[$k] = $val;
-                    }
-                }
-                break;
+            if (getenv($v) !== false) {
+                continue;                   // already set – nothing to do
             }
+
+            $envFile = dirname(__DIR__, 1) . '/.env';
+            if (!is_readable($envFile)) {
+                return;
+            }
+
+            foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+                if ($line === '' || $line[0] === '#' || !str_contains($line, '=')) {
+                    continue;
+                }
+                [$k, $val] = array_map('trim', explode('=', $line, 2));
+                if ($k !== '' && getenv($k) === false) {
+                    putenv("$k=$val");
+                    $_ENV[$k] = $val;
+                }
+            }
+            break;  // processed first readable .env – stop looking
         }
+    }
+
+    private function __clone() {}
+    public function __wakeup(): void
+    {
+        throw new RuntimeException('Cannot unserialize singleton');
     }
 }
