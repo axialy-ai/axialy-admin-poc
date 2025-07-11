@@ -1,0 +1,68 @@
+#cloud-config
+###############################################################################
+# 0. Base OS preparation
+###############################################################################
+package_update: true
+package_upgrade: true
+packages:
+  - docker.io
+  - docker-compose-plugin
+  - nginx
+  - git
+
+###############################################################################
+# 1. Runtime secrets
+###############################################################################
+write_files:
+  # ── .env consumed by your containers ────────────────────────────────
+  - path: /home/ubuntu/app/.env
+    owner: ubuntu:ubuntu
+    permissions: "0600"
+    content: |
+      DB_HOST=${db_host}
+      DB_PORT=${db_port}
+      DB_USER=${db_user}
+      DB_PASS=${db_pass}
+      ADMIN_DEFAULT_USER=${admin_default_user}
+      ADMIN_DEFAULT_EMAIL=${admin_default_email}
+      ADMIN_DEFAULT_PASSWORD=${admin_default_password}
+
+  # ── nginx reverse-proxy  :80 → :5173 ────────────────────────────────
+  - path: /etc/nginx/sites-available/admin.conf
+    permissions: "0644"
+    content: |
+      server {
+        listen 80 default_server;
+        listen [::]:80 default_server;
+        server_name _;
+        location / {
+          proxy_pass         http://127.0.0.1:5173;
+          proxy_http_version 1.1;
+          proxy_set_header   Upgrade $$http_upgrade;
+          proxy_set_header   Connection "upgrade";
+          proxy_set_header   Host $$host;
+        }
+      }
+
+###############################################################################
+# 2. One-shot bootstrap commands
+###############################################################################
+runcmd:
+  # 2-1 Docker & nginx ready
+  - systemctl enable --now docker
+  - rm -f /etc/nginx/sites-enabled/default
+  - ln -sf /etc/nginx/sites-available/admin.conf /etc/nginx/sites-enabled/admin.conf
+  - systemctl restart nginx
+
+  # 2-2 Pull application repo & start stack
+  - su - ubuntu -c "git clone ${repo_url} /home/ubuntu/app || true"
+  - su - ubuntu -c "cd /home/ubuntu/app && docker compose pull --quiet || true"
+  - su - ubuntu -c "cd /home/ubuntu/app && docker compose up -d || true"
+  - su - ubuntu -c "docker update --restart=unless-stopped \
+        $(docker compose -f /home/ubuntu/app/docker-compose.yml ps -q)"
+
+###############################################################################
+# 3. Finish line
+###############################################################################
+final_message: |
+  ✅ Axialy Admin deployed — nginx is forwarding to http://127.0.0.1:5173
