@@ -20,15 +20,14 @@ jobs:
 
     steps:
     # ──────────────────────────────────────────────────────────────
-    # 1) Checkout ONLY what this component needs
+    # 1) Checkout only what this component needs
     # ──────────────────────────────────────────────────────────────
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        # keeps default auth / depth / etc.
         sparse-checkout: |
-          axialy-admin-product          # application code
-          infra/droplet                 # Terraform module for droplets
+          axialy-admin-product
+          infra/droplet
 
     # ──────────────────────────────────────────────────────────────
     # 2) Provision / refresh droplet with Terraform
@@ -63,7 +62,7 @@ jobs:
           -var="admin_default_user=${{ secrets.ADMIN_DEFAULT_USER }}" \
           -var="admin_default_email=${{ secrets.ADMIN_DEFAULT_EMAIL }}" \
           -var="admin_default_password=${{ secrets.ADMIN_DEFAULT_PASSWORD }}" \
-          -var="component_tag=admin"                       # ← NEW
+          -var="component_tag=admin"
 
         echo "droplet_ip=$(terraform output -raw droplet_ip)"  >> "$GITHUB_OUTPUT"
         echo "droplet_id=$(terraform output -raw droplet_id)"  >> "$GITHUB_OUTPUT"
@@ -83,11 +82,6 @@ jobs:
       env:
         DROPLET_IP: ${{ steps.tfout.outputs.droplet_ip }}
       run: |
-        #################################################################
-        # ↓––– identical deployment logic you already had –––↓
-        # (expect helpers, deploy.sh, tar/scp, env-file generation, etc.)
-        #################################################################
-
         mkdir -p ~/.ssh && chmod 700 ~/.ssh
         echo "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/deploy_key
         chmod 600 ~/.ssh/deploy_key
