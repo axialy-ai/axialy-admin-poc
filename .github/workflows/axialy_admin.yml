@@ -5,29 +5,57 @@ on:
     inputs:
       droplet_name:
         description: "Droplet hostname"
-        required: true
         default: "axialy-admin-prod"
       region:
         description: "DO region (e.g. nyc3, sfo3, fra1)"
         default: sfo3
       size:
-        description: "Droplet size"
+        description: "Droplet size slug"
         default: s-1vcpu-2gb
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      TF_VAR_do_token: ${{ secrets.DO_PAT }}
 
     steps:
-    # ──────────────────────────────────────────────────────────────
-    # 1) Checkout source
-    # ──────────────────────────────────────────────────────────────
-    - name: Checkout code
+    # ─────────────────────────────────────────────────────────
+    # 1) Checkout *only* required paths
+    # ─────────────────────────────────────────────────────────
+    - name: Checkout code (sparse)
       uses: actions/checkout@v4
+      with:
+        sparse-checkout: |
+          .github
+          .paths-admin-only
+          infra
+          axialy-admin-product
+        sparse-checkout-cone-mode: false
+        fetch-depth: 1
 
-    # ──────────────────────────────────────────────────────────────
-    # 2) Provision / refresh droplet with Terraform
-    # ──────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # 2) Remove any orphaned firewall with the same prefix
+    # ─────────────────────────────────────────────────────────
+    - name: Remove orphaned firewall
+      env:
+        DO_PAT: ${{ secrets.DO_PAT }}
+      run: |
+        sudo snap install doctl --classic
+        doctl auth init -t "$DO_PAT"
+        # delete any firewall whose name starts with axially-admin-
+        IDS=$(doctl compute firewall list --no-header --format ID,Name \
+              | awk '$2 ~ /^axialy-admin-/ {print $1}')
+        if [ -n "$IDS" ]; then
+          echo "Deleting orphaned firewalls: $IDS"
+          doctl compute firewall delete $IDS --force
+        else
+          echo "No orphaned firewalls found."
+        fi
+
+    # ─────────────────────────────────────────────────────────
+    # 3) Terraform – create / refresh droplet + firewall
+    # ─────────────────────────────────────────────────────────
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
@@ -37,14 +65,10 @@ jobs:
     - name: Terraform init
       working-directory: infra/droplet
       run: terraform init -input=false
-      env:
-        TF_VAR_do_token: ${{ secrets.DO_PAT }}
 
     - name: Terraform apply
       id: tfout
       working-directory: infra/droplet
-      env:
-        TF_VAR_do_token: ${{ secrets.DO_PAT }}
       run: |
         terraform apply -auto-approve -input=false \
           -var="droplet_name=${{ github.event.inputs.droplet_name }}" \
@@ -59,20 +83,29 @@ jobs:
           -var="admin_default_email=${{ secrets.ADMIN_DEFAULT_EMAIL }}" \
           -var="admin_default_password=${{ secrets.ADMIN_DEFAULT_PASSWORD }}"
 
-        echo "droplet_ip=$(terraform output -raw droplet_ip)"  >> "$GITHUB_OUTPUT"
-        echo "droplet_id=$(terraform output -raw droplet_id)"  >> "$GITHUB_OUTPUT"
+        echo "droplet_ip=$(terraform output -raw droplet_ip)"      >> "$GITHUB_OUTPUT"
+        echo "droplet_id=$(terraform output -raw droplet_id)"      >> "$GITHUB_OUTPUT"
+        echo "firewall_name=$(terraform output -raw firewall_name)" >> "$GITHUB_OUTPUT"
 
-    # ──────────────────────────────────────────────────────────────
-    # 3) Wait a moment so SSH becomes reachable
-    # ──────────────────────────────────────────────────────────────
-    - name: Wait for droplet to be ready
+    # ─────────────────────────────────────────────────────────
+    # 4) Wait for SSH to come up + buffer for cloud-init
+    # ─────────────────────────────────────────────────────────
+    - name: Wait for droplet & cloud-init
+      env:
+        HOST: ${{ steps.tfout.outputs.droplet_ip }}
       run: |
-        echo "Waiting for droplet to be ready..."
-        sleep 60
+        echo "Waiting for SSH on $HOST…"
+        for i in {1..30}; do
+          nc -z $HOST 22 && break
+          echo "  attempt $i/30 – SSH not ready"
+          sleep 10
+        done
+        echo "SSH reachable. Giving cloud-init 30 s to finish…"
+        sleep 30
 
-    # ──────────────────────────────────────────────────────────────
-    # 4) Configure SSH helpers + push application
-    # ──────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # 5) Configure SSH helpers + push application
+    # ─────────────────────────────────────────────────────────
     - name: Configure SSH and Deploy
       env:
         DROPLET_IP: ${{ steps.tfout.outputs.droplet_ip }}
@@ -227,9 +260,9 @@ jobs:
         # ---------- local cleanup ----------
         rm -f deploy.sh env_file /tmp/axialy-admin.tar.gz ssh_with_pass.exp scp_with_pass.exp
 
-    # ──────────────────────────────────────────────────────────────
-    # 5) Quick smoke test
-    # ──────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # 6) Quick smoke test
+    # ─────────────────────────────────────────────────────────
     - name: Verify deployment
       run: |
         echo "Testing deployment..."
@@ -240,9 +273,9 @@ jobs:
           echo "⚠️  Application may still be initializing. HTTP response code: $RESPONSE"
         fi
 
-    # ──────────────────────────────────────────────────────────────
-    # 6) Friendly summary
-    # ──────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # 7) Friendly summary
+    # ─────────────────────────────────────────────────────────
     - name: Display deployment info
       run: |
         echo "========================================"
@@ -252,8 +285,9 @@ jobs:
         echo "  http://${{ steps.tfout.outputs.droplet_ip }}/admin_login.php"
         echo ""
         echo "Droplet Details:"
-        echo "  Name   : ${{ github.event.inputs.droplet_name }}"
-        echo "  IP     : ${{ steps.tfout.outputs.droplet_ip }}"
-        echo "  Region : ${{ github.event.inputs.region }}"
-        echo "  Size   : ${{ github.event.inputs.size }}"
+        echo "  Name       : ${{ github.event.inputs.droplet_name }}"
+        echo "  IP         : ${{ steps.tfout.outputs.droplet_ip }}"
+        echo "  Region     : ${{ github.event.inputs.region }}"
+        echo "  Size       : ${{ github.event.inputs.size }}"
+        echo "  Firewall   : ${{ steps.tfout.outputs.firewall_name }}"
         echo "========================================"
