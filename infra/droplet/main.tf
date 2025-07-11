@@ -45,11 +45,48 @@ resource "digitalocean_firewall" "axialy" {
   name        = "axialy-${var.component_tag}-fw-${var.droplet_name}"
   droplet_ids = [digitalocean_droplet.axialy.id]
 
-  inbound_rule { protocol = "tcp"  port_range = "22"  source_addresses = ["0.0.0.0/0", "::/0"] } # SSH
-  inbound_rule { protocol = "tcp"  port_range = "80"  source_addresses = ["0.0.0.0/0", "::/0"] } # HTTP
-  inbound_rule { protocol = "tcp"  port_range = "443" source_addresses = ["0.0.0.0/0", "::/0"] } # HTTPS
+  # ── inbound ───────────────────────────────
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "22"
+    source_addresses = ["0.0.0.0/0", "::/0"]   # SSH
+  }
 
-  outbound_rule { protocol = "tcp"  port_range = "1-65535" destination_addresses = ["0.0.0.0/0", "::/0"] }
-  outbound_rule { protocol = "udp"  port_range = "1-65535" destination_addresses = ["0.0.0.0/0", "::/0"] }
-  outbound_rule { protocol = "icmp"                     destination_addresses = ["0.0.0.0/0", "::/0"] }
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "80"
+    source_addresses = ["0.0.0.0/0", "::/0"]   # HTTP
+  }
+
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "443"
+    source_addresses = ["0.0.0.0/0", "::/0"]   # HTTPS
+  }
+
+  # ── outbound (allow all) ───────────────────
+  outbound_rule {
+    protocol              = "tcp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  outbound_rule {
+    protocol              = "udp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  outbound_rule {
+    protocol              = "icmp"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
 }
+
+# ───────────────────────────────────────────────────────
+#  Outputs (referenced by GitHub Actions)
+# ───────────────────────────────────────────────────────
+output "droplet_ip"     { value = digitalocean_droplet.axialy.ipv4_address }
+output "droplet_id"     { value = digitalocean_droplet.axialy.id }
+output "droplet_status" { value = digitalocean_droplet.axialy.status }
+output "droplet_urn"    { value = digitalocean_droplet.axialy.urn }
