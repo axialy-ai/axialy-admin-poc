@@ -1,4 +1,4 @@
-name: Axialy Admin UI
+name: 2. Axialy Admin UI
 
 on:
   workflow_dispatch:
