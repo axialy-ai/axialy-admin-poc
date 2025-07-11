@@ -1,4 +1,4 @@
-name: Axialy Admin UI OLD
+name: Axialy Admin UI
 
 on:
   workflow_dispatch:
