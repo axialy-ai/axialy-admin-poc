@@ -128,13 +128,20 @@ jobs:
         set -e
         echo "Setting up Axialy Admin application..."
 
-        # wait out any apt locks so nginx/php don’t fail on first boot
-        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
-          echo "Waiting for apt lock..."
-          sleep 5
-        done
+        # Wait until EVERY apt/dpkg lock is released
+        wait_for_apt() {
+          while fuser /var/lib/apt/lists/lock >/dev/null 2>&1 \
+             || fuser /var/lib/dpkg/lock >/dev/null 2>&1 \
+             || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 ; do
+            echo "Waiting for other apt/dpkg processes..."
+            sleep 5
+          done
+        }
 
+        wait_for_apt
         apt-get update -qq
+
+        wait_for_apt
         apt-get install -y nginx php8.1-fpm php8.1-mysql \
                            php8.1-mbstring php8.1-xml php8.1-curl \
                            php8.1-zip php8.1-gd
