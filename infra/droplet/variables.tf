@@ -1,5 +1,5 @@
 /* ──────────────────────────────────────────────────────────────
- *  Variables for the Axialy Admin droplet module
+ *  Variables for the droplet module (now multi-component)
  * ──────────────────────────────────────────────────────────── */
 
 variable "do_token" {
@@ -72,4 +72,10 @@ variable "admin_default_password" {
   description = "Default admin password"
   type        = string
   sensitive   = true
+}
+
+# NEW — lets the same module serve admin / ui / api
+variable "component_tag" {
+  description = "Logical component name: admin | ui | api"
+  type        = string
 }
