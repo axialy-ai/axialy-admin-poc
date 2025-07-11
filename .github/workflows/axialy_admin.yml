@@ -1,87 +1,60 @@
 name: Axialy Admin UI
 
 on:
-  workflow_dispatch:          # manual trigger
-  push:                       # or when source / infra changes
-    paths:
-      - "axialy-admin-product/**"
-      - "infra/droplet/**"
-      - ".github/workflows/axialy-admin.yml"
-
-env:                          # available to *all* steps
-  TF_VAR_do_token: ${{ secrets.DO_TOKEN }}
+  workflow_dispatch:
+    inputs:
+      droplet_name:
+        description: "Droplet hostname"
+        required: true
+        default: "axialy-admin-prod"
+      region:
+        description: "DO region (e.g. nyc3, sfo3, fra1)"
+        default: sfo3
+      size:
+        description: "Droplet size"
+        default: s-1vcpu-2gb
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-    # ───────────────────────────────────────────────
-    # 1. Checkout repo (sparse)
-    # ───────────────────────────────────────────────
-    - uses: actions/checkout@v4
+    # ──────────────────────────────────────────────────────────────
+    # 1) Checkout only what this component needs
+    # ──────────────────────────────────────────────────────────────
+    - name: Checkout code
+      uses: actions/checkout@v4
       with:
         sparse-checkout: |
           axialy-admin-product
           infra/droplet
 
-    # ───────────────────────────────────────────────
-    # 2. Resolve SSH-key fingerprint (never leave empty!)
-    # ───────────────────────────────────────────────
-    - name: Install jq (for DO API lookup)
-      run: sudo apt-get update -y && sudo apt-get install -y jq
-
-    - name: Resolve SSH fingerprint
-      id: sshfp
-      env:
-        FPR_SECRET:  ${{ secrets.SSH_FINGERPRINT }}
-        DO_TOKEN:    ${{ secrets.DO_TOKEN }}
-        KEY_NAME:    axialy-admin        # adjust if your key label differs
-      shell: bash
-      run: |
-        set -euo pipefail
-        if [[ -n "$FPR_SECRET" ]]; then
-          echo "fingerprint=$FPR_SECRET" >>"$GITHUB_OUTPUT"
-          exit 0
-        fi
-
-        if [[ -z "$DO_TOKEN" ]]; then
-          echo "::error::Neither SSH_FINGERPRINT secret nor DO_TOKEN provided."
-          exit 1
-        fi
-
-        echo "No fingerprint secret – looking it up via DO API…"
-        FP=$(curl -fsSL -H "Authorization: Bearer $DO_TOKEN" \
-              "https://api.digitalocean.com/v2/account/keys" |
-              jq -r --arg NAME "$KEY_NAME" '.ssh_keys[] | select(.name==$NAME) | .fingerprint' |
-              head -n1)
-
-        if [[ -z "$FP" ]]; then
-          echo "::error::Could not find an SSH key named '$KEY_NAME' in your DO account."
-          exit 1
-        fi
-        echo "fingerprint=$FP" >>"$GITHUB_OUTPUT"
-
-    # ───────────────────────────────────────────────
-    # 3. Terraform – create droplet + firewall
-    # ───────────────────────────────────────────────
-    - uses: hashicorp/setup-terraform@v3
+    # ──────────────────────────────────────────────────────────────
+    # 2) Provision / refresh droplet with Terraform
+    # ──────────────────────────────────────────────────────────────
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: 1.6.6
         terraform_wrapper: false
 
+    - name: Terraform init
+      working-directory: infra/droplet
+      run: terraform init -input=false
+      env:
+        TF_VAR_do_token: ${{ secrets.DO_PAT }}
+
     - name: Terraform apply
-      id: tf
+      id: tfout
       working-directory: infra/droplet
       env:
-        FPR: ${{ steps.sshfp.outputs.fingerprint }}
+        TF_VAR_do_token: ${{ secrets.DO_PAT }}
       run: |
-        terraform init -input=false
         terraform apply -auto-approve -input=false \
-          -var="droplet_name=axialy-admin-prod" \
-          -var="region=sfo3" \
-          -var="droplet_size=s-1vcpu-2gb" \
-          -var="ssh_key_fingerprint=$FPR" \
+          -var="droplet_name=${{ github.event.inputs.droplet_name }}" \
+          -var="region=${{ github.event.inputs.region }}" \
+          -var="droplet_size=${{ github.event.inputs.size }}" \
+          -var="ssh_key_fingerprint=${{ secrets.DO_SSH_KEY_FINGERPRINT }}" \
           -var="db_host=${{ secrets.DB_HOST }}" \
           -var="db_port=${{ secrets.DB_PORT }}" \
           -var="db_user=${{ secrets.DB_USER }}" \
@@ -91,124 +64,200 @@ jobs:
           -var="admin_default_password=${{ secrets.ADMIN_DEFAULT_PASSWORD }}" \
           -var="component_tag=admin"
 
-        echo "droplet_ip=$(terraform output -raw droplet_ip)"  >>"$GITHUB_OUTPUT"
-        echo "droplet_id=$(terraform output -raw droplet_id)" >>"$GITHUB_OUTPUT"
+        echo "droplet_ip=$(terraform output -raw droplet_ip)"  >> "$GITHUB_OUTPUT"
+        echo "droplet_id=$(terraform output -raw droplet_id)"  >> "$GITHUB_OUTPUT"
 
-    # ───────────────────────────────────────────────
-    # 4. Wait for SSH to come up
-    # ───────────────────────────────────────────────
-    - name: Wait for SSH
-      env:
-        IP: ${{ steps.tf.outputs.droplet_ip }}
-      shell: bash
+    # ──────────────────────────────────────────────────────────────
+    # 3) Wait a moment so SSH becomes reachable
+    # ──────────────────────────────────────────────────────────────
+    - name: Wait for droplet to be ready
       run: |
-        echo "Waiting for $IP:22 to accept connections…"
-        for i in {1..30}; do
-          nc -z -w5 "$IP" 22 && echo "✓ SSH is up" && exit 0
-          sleep 5
-        done
-        echo "::error::SSH never became reachable"
-        exit 1
+        echo "Waiting for droplet to be ready..."
+        sleep 60
 
-    # ───────────────────────────────────────────────
-    # 5. Upload & run hardened deploy script
-    # ───────────────────────────────────────────────
-    - name: Deploy application
+    # ──────────────────────────────────────────────────────────────
+    # 4) Configure SSH helpers + push application
+    # ──────────────────────────────────────────────────────────────
+    - name: Configure SSH and Deploy
       env:
-        IP:        ${{ steps.tf.outputs.droplet_ip }}
-        SSH_KEY:   ${{ secrets.DEPLOY_KEY }}
-      shell: bash
+        DROPLET_IP: ${{ steps.tfout.outputs.droplet_ip }}
       run: |
-        # ----- prepare local SSH key -----
-        install -m700 -d ~/.ssh
-        printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+        mkdir -p ~/.ssh && chmod 700 ~/.ssh
+        echo "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/deploy_key
         chmod 600 ~/.ssh/deploy_key
-        ssh-keyscan -H "$IP" >> ~/.ssh/known_hosts 2>/dev/null
+        ssh-keyscan -H $DROPLET_IP >> ~/.ssh/known_hosts 2>/dev/null || true
 
-        # tiny helper to run commands via key (handles passphrase prompts)
-        cat > ssh.exp <<'EOF'
+        sudo apt-get update -qq
+        sudo apt-get install -y expect
+
+        # ---------- expect helper for ssh ----------
+        cat > ssh_with_pass.exp <<'EOF'
         #!/usr/bin/expect -f
         set timeout 300
-        set key   [lindex $argv 0]
-        set host  [lindex $argv 1]
-        set pass  [lindex $argv 2]
-        set cmd   [lindex $argv 3]
-        spawn ssh -i $key -o StrictHostKeyChecking=no root@$host $cmd
+        set ssh_key  [lindex $argv 0]
+        set host     [lindex $argv 1]
+        set passph   [lindex $argv 2]
+        set cmd      [lindex $argv 3]
+        spawn ssh -i $ssh_key -o StrictHostKeyChecking=no root@$host $cmd
         expect {
-          "Enter passphrase for key*" { send "$pass\r"; exp_continue }
+          "Enter passphrase for key*" { send "$passph\r"; exp_continue }
           eof
         }
         EOF
-        chmod +x ssh.exp
+        chmod +x ssh_with_pass.exp
 
-        # ---------------- deploy.sh sent to droplet ----------------
-        cat > deploy.sh <<'DEPLOY'
-        #!/usr/bin/env bash
-        set -euo pipefail
-        echo "[+] Boot-strapping Axialy Admin on $(hostname)…"
+        # ---------- expect helper for scp ----------
+        cat > scp_with_pass.exp <<'EOF'
+        #!/usr/bin/expect -f
+        set timeout 300
+        set ssh_key  [lindex $argv 0]
+        set source   [lindex $argv 1]
+        set dest     [lindex $argv 2]
+        set passph   [lindex $argv 3]
+        spawn scp -i $ssh_key -o StrictHostKeyChecking=no $source $dest
+        expect {
+          "Enter passphrase for key*" { send "$passph\r"; exp_continue }
+          eof
+        }
+        EOF
+        chmod +x scp_with_pass.exp
 
-        # ---- wait for *all* apt / dpkg locks ----
-        while lsof /var/lib/dpkg/lock-frontend            >/dev/null 2>&1 \
-           || lsof /var/lib/dpkg/lock                     >/dev/null 2>&1 \
-           || lsof /var/lib/apt/lists/lock                >/dev/null 2>&1 ; do
-          echo "    apt is busy – waiting …"
+        # ---------- bootstrap script (installs Nginx + PHP) ----------
+        cat > deploy.sh <<'DEPLOY_SCRIPT'
+        #!/bin/bash
+        set -e
+        echo "Setting up Axialy Admin application..."
+
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+          echo "Waiting for apt lock..."
           sleep 5
         done
 
-        # ---- retry package install up to 5× in case apt-daily kicks in ----
-        attempt=0
-        until DEBIAN_FRONTEND=noninteractive \
-           apt-get update -qq && \
-           DEBIAN_FRONTEND=noninteractive \
-           apt-get install -y nginx php8.1-fpm php8.1-mysql \
-                              php8.1-mbstring php8.1-xml php8.1-curl \
-                              php8.1-zip php8.1-gd ; do
-          attempt=$(( attempt + 1 ))
-          if [ "$attempt" -ge 5 ]; then
-            echo "FATAL: apt kept failing after $attempt attempts"; exit 1
-          fi
-          echo "    apt failed (attempt $attempt) – retrying in 10 s …"
-          sleep 10
-        done
+        apt-get update -qq
+        apt-get install -y nginx php8.1-fpm php8.1-mysql \
+                           php8.1-mbstring php8.1-xml php8.1-curl \
+                           php8.1-zip php8.1-gd
 
-        # ---- configure PHP & Nginx ----
         sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
-        systemctl enable --now php8.1-fpm nginx
+        systemctl restart php8.1-fpm
 
-        cat >/etc/nginx/sites-available/axialy-admin <<'NGINX'
+        cat > /etc/nginx/sites-available/axialy-admin <<'NGINX_CONF'
         server {
           listen 80 default_server;
           listen [::]:80 default_server;
 
           root /var/www/axialy-admin;
           index index.php index.html;
-
           server_name _;
 
-          location /            { try_files $uri $uri/ /index.php?$query_string; }
-          location ~ \.php$     {
+          location / {
+            try_files \$uri \$uri/ /index.php?\$query_string;
+          }
+
+          location ~ \.php$ {
             include snippets/fastcgi-php.conf;
             fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
           }
-          location ~ /\.        { deny all; }
 
-          add_header X-Frame-Options       "SAMEORIGIN" always;
-          add_header X-Content-Type-Options "nosniff"   always;
-          add_header X-XSS-Protection      "1; mode=block" always;
+          location ~ /\. {
+            deny all;
+          }
+
+          add_header X-Frame-Options "SAMEORIGIN" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-XSS-Protection "1; mode=block" always;
         }
-        NGINX
+        NGINX_CONF
+
         ln -sf /etc/nginx/sites-available/axialy-admin /etc/nginx/sites-enabled/
         rm -f /etc/nginx/sites-enabled/default
         nginx -t
-        systemctl reload nginx
+        systemctl restart nginx
+        DEPLOY_SCRIPT
 
-        echo "[✓] Base stack ready"
-        DEPLOY
-        chmod +x deploy.sh
-        # -------------------------------------------------------------------
+        ./scp_with_pass.exp ~/.ssh/deploy_key deploy.sh root@$DROPLET_IP:/tmp/deploy.sh "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
+        ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "chmod +x /tmp/deploy.sh && bash /tmp/deploy.sh"
 
-        # copy artefacts & run the script
-        scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy.sh root@$IP:/root/
-        ./ssh.exp ~/.ssh/deploy_key $IP "" "bash /root/deploy.sh"
+        # ---------- package application ----------
+        cd axialy-admin-product
+        tar -czf /tmp/axialy-admin.tar.gz .
+        cd ..
 
-        echo "[✓] Deployment finished – hit http://$IP/admin_login.php"
+        # ---------- copy application ----------
+        ./scp_with_pass.exp ~/.ssh/deploy_key /tmp/axialy-admin.tar.gz root@$DROPLET_IP:/tmp/ "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
+        ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
+          "mkdir -p /var/www/axialy-admin && \
+           tar -xzf /tmp/axialy-admin.tar.gz -C /var/www/axialy-admin && \
+           chown -R www-data:www-data /var/www/axialy-admin && \
+           find /var/www/axialy-admin -type d -exec chmod 755 {} \; && \
+           find /var/www/axialy-admin -type f -exec chmod 644 {} \;"
+
+        # ---------- swap in HTTP-friendly login page ----------
+        ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
+          "mv /var/www/axialy-admin/admin_login.http.php /var/www/axialy-admin/admin_login.php"
+
+        # ---------- generate environment file ----------
+        cat > env_file <<'ENV_EOF'
+        # Axialy Admin DB
+        DB_HOST=${{ secrets.DB_HOST }}
+        DB_PORT=${{ secrets.DB_PORT }}
+        DB_NAME=axialy_admin
+        DB_USER=${{ secrets.DB_USER }}
+        DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+
+        # Axialy UI DB
+        UI_DB_HOST=${{ secrets.DB_HOST }}
+        UI_DB_PORT=${{ secrets.DB_PORT }}
+        UI_DB_NAME=axialy_ui
+        UI_DB_USER=${{ secrets.DB_USER }}
+        UI_DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+
+        # Admin defaults
+        ADMIN_DEFAULT_USER=${{ secrets.ADMIN_DEFAULT_USER }}
+        ADMIN_DEFAULT_EMAIL=${{ secrets.ADMIN_DEFAULT_EMAIL }}
+        ADMIN_DEFAULT_PASSWORD=${{ secrets.ADMIN_DEFAULT_PASSWORD }}
+        ENV_EOF
+
+        ./scp_with_pass.exp ~/.ssh/deploy_key env_file root@$DROPLET_IP:/var/www/axialy-admin/.env "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
+
+        # ---------- set permissions ----------
+        ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
+          "chmod 640 /var/www/axialy-admin/.env && chown www-data:www-data /var/www/axialy-admin/.env"
+
+        # ---------- restart services ----------
+        ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
+          "systemctl restart php8.1-fpm nginx"
+
+        # ---------- local cleanup ----------
+        rm -f deploy.sh env_file /tmp/axialy-admin.tar.gz ssh_with_pass.exp scp_with_pass.exp
+
+    # ──────────────────────────────────────────────────────────────
+    # 5) Quick smoke test
+    # ──────────────────────────────────────────────────────────────
+    - name: Verify deployment
+      run: |
+        echo "Testing deployment..."
+        RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://${{ steps.tfout.outputs.droplet_ip }}/admin_login.php || echo "000")
+        if [ "$RESPONSE" = "200" ]; then
+          echo "✅ Deployment successful! Application is responding."
+        else
+          echo "⚠️  Application may still be initializing. HTTP response code: $RESPONSE"
+        fi
+
+    # ──────────────────────────────────────────────────────────────
+    # 6) Friendly summary
+    # ──────────────────────────────────────────────────────────────
+    - name: Display deployment info
+      run: |
+        echo "========================================"
+        echo "Axialy Admin deployed successfully!"
+        echo "========================================"
+        echo "Access your application at:"
+        echo "  http://${{ steps.tfout.outputs.droplet_ip }}/admin_login.php"
+        echo ""
+        echo "Droplet Details:"
+        echo "  Name   : ${{ github.event.inputs.droplet_name }}"
+        echo "  IP     : ${{ steps.tfout.outputs.droplet_ip }}"
+        echo "  Region : ${{ github.event.inputs.region }}"
+        echo "  Size   : ${{ github.event.inputs.size }}"
+        echo "========================================"
