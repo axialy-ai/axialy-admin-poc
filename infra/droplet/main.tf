@@ -12,20 +12,20 @@ provider "digitalocean" {
   token = var.do_token
 }
 
-# Droplet for Axialy Admin
-resource "digitalocean_droplet" "axialy_admin" {
+# ───────────────────────────────────────────────────────
+#  Droplet for *any* Axialy component
+# ───────────────────────────────────────────────────────
+resource "digitalocean_droplet" "axialy" {
   name     = var.droplet_name
   region   = var.region
   size     = var.droplet_size
   image    = "ubuntu-22-04-x64"
-  
-  ssh_keys = [var.ssh_key_fingerprint]
-  
-  # Enable monitoring and backups for production use
+
+  ssh_keys   = [var.ssh_key_fingerprint]
   monitoring = true
   backups    = false
-  
-  # User data to set up environment variables
+
+  # Cloud-init template untouched
   user_data = templatefile("${path.module}/cloud-init.yaml", {
     db_host                = var.db_host
     db_port                = var.db_port
@@ -35,52 +35,57 @@ resource "digitalocean_droplet" "axialy_admin" {
     admin_default_email    = var.admin_default_email
     admin_default_password = var.admin_default_password
   })
-  
-  tags = ["axialy", "admin", "web"]
+
+  tags = ["axialy", var.component_tag, "web"]
 }
 
-# Firewall rules with unique name
-resource "digitalocean_firewall" "axialy_admin" {
-  name = "axialy-admin-firewall-${var.droplet_name}"
-  
-  droplet_ids = [digitalocean_droplet.axialy_admin.id]
-  
-  # Allow SSH
+# ───────────────────────────────────────────────────────
+#  Firewall specific to this droplet / component
+# ───────────────────────────────────────────────────────
+resource "digitalocean_firewall" "axialy" {
+  name        = "axialy-${var.component_tag}-fw-${var.droplet_name}"
+  droplet_ids = [digitalocean_droplet.axialy.id]
+
+  # SSH
   inbound_rule {
     protocol         = "tcp"
     port_range       = "22"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
-  
-  # Allow HTTP
+  # HTTP
   inbound_rule {
     protocol         = "tcp"
     port_range       = "80"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
-  
-  # Allow HTTPS
+  # HTTPS
   inbound_rule {
     protocol         = "tcp"
     port_range       = "443"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
-  
-  # Allow all outbound traffic
+
+  # Allow all outbound
   outbound_rule {
     protocol              = "tcp"
     port_range            = "1-65535"
     destination_addresses = ["0.0.0.0/0", "::/0"]
   }
-  
   outbound_rule {
     protocol              = "udp"
     port_range            = "1-65535"
     destination_addresses = ["0.0.0.0/0", "::/0"]
   }
-  
   outbound_rule {
     protocol              = "icmp"
     destination_addresses = ["0.0.0.0/0", "::/0"]
   }
 }
+
+# ───────────────────────────────────────────────────────
+#  Outputs (unchanged apart from resource name)
+# ───────────────────────────────────────────────────────
+output "droplet_ip"     { value = digitalocean_droplet.axialy.ipv4_address }
+output "droplet_id"     { value = digitalocean_droplet.axialy.id }
+output "droplet_status" { value = digitalocean_droplet.axialy.status }
+output "droplet_urn"    { value = digitalocean_droplet.axialy.urn }
