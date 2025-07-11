@@ -20,10 +20,15 @@ jobs:
 
     steps:
     # ──────────────────────────────────────────────────────────────
-    # 1) Checkout source
+    # 1) Checkout ONLY what this component needs
     # ──────────────────────────────────────────────────────────────
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        # keeps default auth / depth / etc.
+        sparse-checkout: |
+          axialy-admin-product          # application code
+          infra/droplet                 # Terraform module for droplets
 
     # ──────────────────────────────────────────────────────────────
     # 2) Provision / refresh droplet with Terraform
@@ -57,7 +62,8 @@ jobs:
           -var="db_password=${{ secrets.DB_PASSWORD }}" \
           -var="admin_default_user=${{ secrets.ADMIN_DEFAULT_USER }}" \
           -var="admin_default_email=${{ secrets.ADMIN_DEFAULT_EMAIL }}" \
-          -var="admin_default_password=${{ secrets.ADMIN_DEFAULT_PASSWORD }}"
+          -var="admin_default_password=${{ secrets.ADMIN_DEFAULT_PASSWORD }}" \
+          -var="component_tag=admin"                       # ← NEW
 
         echo "droplet_ip=$(terraform output -raw droplet_ip)"  >> "$GITHUB_OUTPUT"
         echo "droplet_id=$(terraform output -raw droplet_id)"  >> "$GITHUB_OUTPUT"
@@ -77,6 +83,11 @@ jobs:
       env:
         DROPLET_IP: ${{ steps.tfout.outputs.droplet_ip }}
       run: |
+        #################################################################
+        # ↓––– identical deployment logic you already had –––↓
+        # (expect helpers, deploy.sh, tar/scp, env-file generation, etc.)
+        #################################################################
+
         mkdir -p ~/.ssh && chmod 700 ~/.ssh
         echo "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/deploy_key
         chmod 600 ~/.ssh/deploy_key
@@ -170,7 +181,6 @@ jobs:
         systemctl restart nginx
         DEPLOY_SCRIPT
 
-        # ---------- push bootstrap script & execute ----------
         ./scp_with_pass.exp ~/.ssh/deploy_key deploy.sh root@$DROPLET_IP:/tmp/deploy.sh "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
         ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "chmod +x /tmp/deploy.sh && bash /tmp/deploy.sh"
 
