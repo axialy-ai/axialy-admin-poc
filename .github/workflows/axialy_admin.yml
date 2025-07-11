@@ -128,6 +128,7 @@ jobs:
         set -e
         echo "Setting up Axialy Admin application..."
 
+        # wait out any apt locks so nginx/php don’t fail on first boot
         while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
           echo "Waiting for apt lock..."
           sleep 5
