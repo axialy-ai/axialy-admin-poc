@@ -1,0 +1,4 @@
+# Folders needed by the Axialy Admin workflow
+.github/
+infra/
+axialy-admin-product/
