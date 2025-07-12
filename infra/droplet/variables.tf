@@ -1,5 +1,5 @@
 /* ──────────────────────────────────────────────────────────────
- *  Variables for the droplet module (multi-component)
+ *  Variables for the droplet module (now multi-component)
  * ──────────────────────────────────────────────────────────── */
 
 variable "do_token" {
@@ -30,7 +30,7 @@ variable "ssh_key_fingerprint" {
   type        = string
 }
 
-/* ── MySQL / shared credentials ────────────────────────────── */
+/*  ── MySQL / shared credentials ──────────────────────────── */
 variable "db_host" {
   description = "Database host"
   type        = string
@@ -55,7 +55,7 @@ variable "db_password" {
   sensitive   = true
 }
 
-/* ── Admin bootstrap creds (optional for UI/API) ───────────── */
+/*  ── Admin bootstrap creds (optional for UI/API) ─────────── */
 variable "admin_default_user" {
   description = "Default admin username"
   type        = string
@@ -74,44 +74,29 @@ variable "admin_default_password" {
   sensitive   = true
 }
 
-/* ── Component tag (admin | ui | api) ──────────────────────── */
+/*  ── Component tag (admin | ui | api) ─────────────────────── */
 variable "component_tag" {
   description = "Logical component name: admin | ui | api"
   type        = string
 }
 
-/* ── Amazon SES SMTP relay credentials ─────────────────────── */
-
-/** Region of the SES SMTP endpoint (only hostname construction
-    uses this for now, so a default is fine) */
-variable "ses_region" {
-  description = "AWS region for the SES SMTP endpoint"
-  type        = string
-  default     = "us-east-1"
-}
-
-/** SMTP user – REQUIRED when component_tag == "ui"            */
+/*  ── NEW: SES SMTP relay credentials  ─────────────────────── */
 variable "ses_smtp_user" {
-  description = "Amazon SES SMTP user name (looks like an AKIA… key)"
+  description = "Amazon SES SMTP user name (AKIA…)"
   type        = string
   sensitive   = true
-  default     = ""
-
-  validation {
-    condition     = var.component_tag == "ui" ? length(trim(var.ses_smtp_user)) > 0 : true
-    error_message = "ses_smtp_user must be provided for e-mail-sending components (component_tag == \"ui\")."
-  }
+  default     = ""          # pipelines MUST pass a value for components that send email
 }
 
-/** SMTP password – REQUIRED when component_tag == "ui"         */
 variable "ses_smtp_pass" {
   description = "Amazon SES SMTP password"
   type        = string
   sensitive   = true
   default     = ""
+}
 
-  validation {
-    condition     = var.component_tag == "ui" ? length(trim(var.ses_smtp_pass)) > 0 : true
-    error_message = "ses_smtp_pass must be provided for e-mail-sending components (component_tag == \"ui\")."
-  }
+variable "ses_region" {
+  description = "AWS region for the SES SMTP endpoint"
+  type        = string
+  default     = "us-east-1"
 }
