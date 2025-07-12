@@ -58,8 +58,8 @@ class AccountCreation
         $headers = [
             'MIME-Version: 1.0',
             'Content-type: text/html; charset=UTF-8',
-            'From: AxiaBA <support@axialy.ai>',
-            'Reply-To: support@axialy.ai'
+            'From: AxiaBA <support@axiaba.com>',
+            'Reply-To: support@axiaba.com'
         ];
         return mail($email, $subject, $message, implode("\r\n", $headers));
     }
@@ -131,8 +131,8 @@ class AccountCreation
         $headers = [
             'MIME-Version: 1.0',
             'Content-type: text/html; charset=UTF-8',
-            'From: AxiaBA <support@axialy.ai>',
-            'Reply-To: support@axialy.ai'
+            'From: AxiaBA <support@axiaba.com>',
+            'Reply-To: support@axiaba.com'
         ];
         @mail($email, $subject, $message, implode("\r\n", $headers));
     }
