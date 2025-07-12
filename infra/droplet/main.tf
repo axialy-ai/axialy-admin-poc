@@ -16,6 +16,7 @@ provider "digitalocean" {
 # ──────────────────────────────────────────────────────────────
 #  Droplet for *any* Axialy component (admin | ui | api)
 # ──────────────────────────────────────────────────────────────
+
 resource "digitalocean_droplet" "axialy" {
   name     = var.droplet_name
   region   = var.region
@@ -34,10 +35,19 @@ resource "digitalocean_droplet" "axialy" {
     admin_default_user     = var.admin_default_user
     admin_default_email    = var.admin_default_email
     admin_default_password = var.admin_default_password
+
+    /* NEW – pass SMTP relay creds into cloud-init */
+    smtp_host              = var.smtp_host
+    smtp_port              = var.smtp_port
+    smtp_user              = var.smtp_user
+    smtp_password          = var.smtp_password
   })
 
   tags = ["axialy", var.component_tag, "web"]
 }
+
+/* firewall + outputs remain exactly the same */
+
 
 # ──────────────────────────────────────────────────────────────
 #  Firewall for this one droplet / component
