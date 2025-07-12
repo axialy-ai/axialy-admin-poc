@@ -1,6 +1,7 @@
 <?php
-// /app.axialy.ai/includes/auth.php
-// Ensure database connection is available
+// /includes/auth.php
+session_name('axialy_ui_session');   // ★ distinct cookie for the UI
+
 require_once __DIR__ . '/db_connection.php';
 require_once __DIR__ . '/debug_utils.php';
 
