@@ -3,8 +3,6 @@ package_update: true
 package_upgrade: true
 packages:
   - nginx
-  - postfix
-  - libsasl2-modules
   - php8.1-fpm
   - php8.1-mysql
   - php8.1-mbstring
@@ -16,11 +14,7 @@ packages:
   - ufw
 
 write_files:
-  # ────────────────────────────────────────────────────────────
-  #  Environment variables exposed to every login shell
-  # ────────────────────────────────────────────────────────────
-  - path: /etc/environment
-    append: true
+  - path: /etc/environment                # exported to every login shell
     content: |
       DB_HOST="${db_host}"
       DB_PORT="${db_port}"
@@ -37,20 +31,7 @@ write_files:
       ADMIN_DEFAULT_USER="${admin_default_user}"
       ADMIN_DEFAULT_EMAIL="${admin_default_email}"
       ADMIN_DEFAULT_PASSWORD="${admin_default_password}"
-
-      # NEW – expose SES creds for any shell debugging
-      SES_SMTP_USER="${ses_smtp_user}"
-      SES_SMTP_PASS="${ses_smtp_pass}"
-      SES_REGION="${ses_region}"
-
-  # ────────────────────────────────────────────────────────────
-  #  Postfix SASL password map (0600 root only)
-  # ────────────────────────────────────────────────────────────
-  - path: /etc/postfix/sasl_passwd
-    owner: root:root
-    permissions: '0600'
-    content: |
-      [email-smtp.${ses_region}.amazonaws.com]:587 ${ses_smtp_user}:${ses_smtp_pass}
+    append: true
 
 runcmd:
   # 1. Harden firewall
@@ -63,19 +44,7 @@ runcmd:
   - sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
   - systemctl restart php8.1-fpm
 
-  # 3. Postfix → SES configuration
-  - postmap /etc/postfix/sasl_passwd
-  - |
-    postconf -e "relayhost = [email-smtp.${ses_region}.amazonaws.com]:587"
-    postconf -e "smtp_sasl_auth_enable = yes"
-    postconf -e "smtp_sasl_security_options = noanonymous"
-    postconf -e "smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd"
-    postconf -e "smtp_use_tls = yes"
-    postconf -e "smtp_tls_ca_file = /etc/ssl/certs/ca-certificates.crt"
-  - systemctl restart postfix
-
-  # 4. Prepare web roots (keep identical behaviour)
+  # 3. Prepare web root (no placeholder file any more!)
   - mkdir -p /var/www/axialy-admin
   - chown -R www-data:www-data /var/www/axialy-admin
   - find  /var/www/axialy-admin -type d -exec chmod 755 {} \;
-
