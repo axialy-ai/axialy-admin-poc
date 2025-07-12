@@ -13,9 +13,9 @@ provider "digitalocean" {
   token = var.do_token
 }
 
-# ──────────────────────────────────────────────────────────────
-#  Droplet for *any* Axialy component (admin | ui | api)
-# ──────────────────────────────────────────────────────────────
+/* ──────────────────────────────────────────────────────────────
+ *  Droplet for *any* Axialy component (admin | ui | api)
+ * ──────────────────────────────────────────────────────────── */
 resource "digitalocean_droplet" "axialy" {
   name     = var.droplet_name
   region   = var.region
@@ -27,6 +27,7 @@ resource "digitalocean_droplet" "axialy" {
   backups    = false
 
   user_data = templatefile("${path.module}/cloud-init.yaml", {
+    # ── DB & admin bootstrap vars ────────────────────────────
     db_host                = var.db_host
     db_port                = var.db_port
     db_user                = var.db_user
@@ -34,14 +35,19 @@ resource "digitalocean_droplet" "axialy" {
     admin_default_user     = var.admin_default_user
     admin_default_email    = var.admin_default_email
     admin_default_password = var.admin_default_password
+
+    # ── NEW: SES vars ────────────────────────────────────────
+    ses_smtp_user          = var.ses_smtp_user
+    ses_smtp_pass          = var.ses_smtp_pass
+    ses_region             = var.ses_region
   })
 
   tags = ["axialy", var.component_tag, "web"]
 }
 
-# ──────────────────────────────────────────────────────────────
-#  Firewall for this one droplet / component
-# ──────────────────────────────────────────────────────────────
+/* ──────────────────────────────────────────────────────────────
+ *  Firewall always lives alongside the droplet
+ * ──────────────────────────────────────────────────────────── */
 resource "digitalocean_firewall" "axialy" {
   name        = "axialy-${var.component_tag}-fw-${var.droplet_name}"
   droplet_ids = [digitalocean_droplet.axialy.id]
@@ -83,7 +89,3 @@ resource "digitalocean_firewall" "axialy" {
     destination_addresses = ["0.0.0.0/0", "::/0"]
   }
 }
-
-# ──────────────────────────────────────────────────────────────
-#  NOTE: outputs moved to outputs.tf to avoid duplication
-# ──────────────────────────────────────────────────────────────
