@@ -62,7 +62,12 @@ jobs:
           -var="admin_default_user=${{ secrets.ADMIN_DEFAULT_USER }}" \
           -var="admin_default_email=${{ secrets.ADMIN_DEFAULT_EMAIL }}" \
           -var="admin_default_password=${{ secrets.ADMIN_DEFAULT_PASSWORD }}" \
-          -var="component_tag=ui"
+          -var="component_tag=ui" \
+          # ───── SMTP relay parameters (Option 2) ─────
+          -var="smtp_host=${{ secrets.SMTP_HOST }}" \
+          -var="smtp_port=${{ secrets.SMTP_PORT }}" \
+          -var="smtp_user=${{ secrets.SMTP_USER }}" \
+          -var="smtp_password=${{ secrets.SMTP_PASSWORD }}"
 
         echo "droplet_ip=$(terraform output -raw droplet_ip)"  >> "$GITHUB_OUTPUT"
         echo "droplet_id=$(terraform output -raw droplet_id)"  >> "$GITHUB_OUTPUT"
@@ -84,7 +89,7 @@ jobs:
       run: |
         set -e
         #################################################################
-        # A) SSH helpers (identical to Admin pipeline)
+        # A) SSH helpers
         #################################################################
         mkdir -p ~/.ssh && chmod 700 ~/.ssh
         echo "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/deploy_key
@@ -125,7 +130,7 @@ jobs:
         chmod +x scp_with_pass.exp
 
         #################################################################
-        # B) Remote bootstrap script (unchanged)
+        # B) Remote bootstrap script
         #################################################################
         cat > deploy.sh <<'BOOT'
         #!/usr/bin/env bash
@@ -190,9 +195,7 @@ jobs:
         ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "chmod +x /tmp/deploy.sh && bash /tmp/deploy.sh"
 
         #################################################################
-        # C) Package application and transfer                           #
-        #    NOTE:  Changed -C flag so files unpack directly into       #
-        #           /var/www/axialy-ui (no extra sub-folder)            #
+        # C) Package application and transfer
         #################################################################
         tar -czf /tmp/axialy-ui.tar.gz -C axialy-ui-product .
         ./scp_with_pass.exp ~/.ssh/deploy_key /tmp/axialy-ui.tar.gz root@$DROPLET_IP:/tmp/ "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
@@ -204,7 +207,7 @@ jobs:
            find /var/www/axialy-ui -type f -exec chmod 644 {} \;"
 
         #################################################################
-        # D) Write .env (unchanged)
+        # D) Write .env
         #################################################################
         cat > env_file <<'ENV_EOF'
         # Axialy UI DB
@@ -244,7 +247,6 @@ jobs:
     - name: Verify deployment
       run: |
         echo "Testing deployment..."
-        # we accept 200 *or* 302 (redirect to login) as success
         CODE=$(curl -s -o /dev/null -w '%{http_code}' http://${{ steps.tfout.outputs.droplet_ip }}/ || echo "000")
         if [ "$CODE" = "200" ] || [ "$CODE" = "302" ]; then
           echo "✅ Deployment successful! HTTP $CODE"
