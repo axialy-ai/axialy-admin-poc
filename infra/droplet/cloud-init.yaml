@@ -2,6 +2,7 @@
 package_update: true
 package_upgrade: true
 packages:
+  # web stack
   - nginx
   - php8.1-fpm
   - php8.1-mysql
@@ -12,9 +13,14 @@ packages:
   - php8.1-gd
   - git
   - ufw
+  # ────── NEW – Postfix smart-host relay deps ──────
+  - postfix               # will prompt → accept “Internet Site”
+  - mailutils
+  - libsasl2-modules
 
 write_files:
-  - path: /etc/environment                # exported to every login shell
+  # export DB creds to login shells (unchanged snip) ───────────────────
+  - path: /etc/environment
     content: |
       DB_HOST="${db_host}"
       DB_PORT="${db_port}"
@@ -33,6 +39,13 @@ write_files:
       ADMIN_DEFAULT_PASSWORD="${admin_default_password}"
     append: true
 
+  # ────── NEW – SASL password map for Postfix ──────
+  - path: /etc/postfix/sasl_passwd
+    content: |
+      [${smtp_host}]:${smtp_port} ${smtp_user}:${smtp_password}
+    owner: root:root
+    permissions: '0600'
+
 runcmd:
   # 1. Harden firewall
   - ufw allow 22/tcp
@@ -40,11 +53,25 @@ runcmd:
   - ufw allow 443/tcp
   - ufw --force enable
 
-  # 2. PHP hardening – disable cgi.fix_pathinfo
+  # 2. PHP hardening
   - sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
   - systemctl restart php8.1-fpm
 
-  # 3. Prepare web root (no placeholder file any more!)
+  # 3. Prepare web root (admin placeholder – ui folder created by CI)
   - mkdir -p /var/www/axialy-admin
   - chown -R www-data:www-data /var/www/axialy-admin
   - find  /var/www/axialy-admin -type d -exec chmod 755 {} \;
+
+  # ────── NEW – Postfix smart-host relay configuration ──────
+  - |
+    postmap /etc/postfix/sasl_passwd
+    # ensure main.cf has the relay & TLS/SASL flags
+    postconf -e "relayhost = [${smtp_host}]:${smtp_port}"
+    postconf -e "smtp_sasl_auth_enable = yes"
+    postconf -e "smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd"
+    postconf -e "smtp_sasl_security_options = noanonymous"
+    postconf -e "smtp_use_tls = yes"
+    postconf -e "smtp_tls_wrappermode = yes"
+    # minimal HELO identity
+    postconf -e "myhostname = ${HOSTNAME}.axiaba.internal"
+    systemctl restart postfix
