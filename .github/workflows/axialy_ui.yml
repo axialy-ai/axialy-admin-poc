@@ -125,7 +125,7 @@ jobs:
         chmod +x scp_with_pass.exp
 
         #################################################################
-        # B) Remote bootstrap script (same hardening as Admin)
+        # B) Remote bootstrap script (unchanged)
         #################################################################
         cat > deploy.sh <<'BOOT'
         #!/usr/bin/env bash
@@ -190,9 +190,11 @@ jobs:
         ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "chmod +x /tmp/deploy.sh && bash /tmp/deploy.sh"
 
         #################################################################
-        # C) Package application and transfer
+        # C) Package application and transfer                           #
+        #    NOTE:  Changed -C flag so files unpack directly into       #
+        #           /var/www/axialy-ui (no extra sub-folder)            #
         #################################################################
-        tar -czf /tmp/axialy-ui.tar.gz axialy-ui-product
+        tar -czf /tmp/axialy-ui.tar.gz -C axialy-ui-product .
         ./scp_with_pass.exp ~/.ssh/deploy_key /tmp/axialy-ui.tar.gz root@$DROPLET_IP:/tmp/ "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
         ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
           "mkdir -p /var/www/axialy-ui && \
@@ -202,7 +204,7 @@ jobs:
            find /var/www/axialy-ui -type f -exec chmod 644 {} \;"
 
         #################################################################
-        # D) Write .env (mirrors Admin style)
+        # D) Write .env (unchanged)
         #################################################################
         cat > env_file <<'ENV_EOF'
         # Axialy UI DB
@@ -242,11 +244,13 @@ jobs:
     - name: Verify deployment
       run: |
         echo "Testing deployment..."
-        RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://${{ steps.tfout.outputs.droplet_ip }}/login.php || echo "000")
-        if [ "$RESPONSE" = "200" ]; then
-          echo "✅ Deployment successful! Application is responding."
+        # we accept 200 *or* 302 (redirect to login) as success
+        CODE=$(curl -s -o /dev/null -w '%{http_code}' http://${{ steps.tfout.outputs.droplet_ip }}/ || echo "000")
+        if [ "$CODE" = "200" ] || [ "$CODE" = "302" ]; then
+          echo "✅ Deployment successful! HTTP $CODE"
         else
-          echo "⚠️  Application may still be initializing. HTTP response code: $RESPONSE"
+          echo "❌ Unexpected HTTP response $CODE"
+          exit 1
         fi
 
     # ──────────────────────────────────────────────────────────────
