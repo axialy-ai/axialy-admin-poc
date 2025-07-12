@@ -30,7 +30,7 @@ variable "ssh_key_fingerprint" {
   type        = string
 }
 
-# Database connection variables
+/*  ── MySQL / shared credentials ──────────────────────────── */
 variable "db_host" {
   description = "Database host"
   type        = string
@@ -55,7 +55,7 @@ variable "db_password" {
   sensitive   = true
 }
 
-# Admin defaults
+/*  ── Admin bootstrap creds (optional for UI/API) ─────────── */
 variable "admin_default_user" {
   description = "Default admin username"
   type        = string
@@ -74,8 +74,29 @@ variable "admin_default_password" {
   sensitive   = true
 }
 
-# NEW — lets the same module serve admin / ui / api
+/*  ── Component tag (admin | ui | api) ─────────────────────── */
 variable "component_tag" {
   description = "Logical component name: admin | ui | api"
   type        = string
+}
+
+/*  ── NEW: SES SMTP relay credentials  ─────────────────────── */
+variable "ses_smtp_user" {
+  description = "Amazon SES SMTP user name (AKIA…)"
+  type        = string
+  sensitive   = true
+  default     = ""          # pipelines MUST pass a value for components that send email
+}
+
+variable "ses_smtp_pass" {
+  description = "Amazon SES SMTP password"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "ses_region" {
+  description = "AWS region for the SES SMTP endpoint"
+  type        = string
+  default     = "us-east-1"
 }
