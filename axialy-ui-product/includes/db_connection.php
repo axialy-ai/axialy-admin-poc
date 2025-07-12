@@ -1,54 +1,83 @@
 <?php
-// /includes/db_connection.php
+/**
+ * Axialy UI – database connection helper.
+ *
+ * Reads the five UI_DB_* parameters from real env-vars; if any are
+ * missing it looks for a .env file at the project root and imports them.
+ * The connection is returned as a PDO instance.
+ */
+
 declare(strict_types=1);
 
-require_once __DIR__ . '/Config.php';
-use AxiaBA\Config\Config;
+/* ---------- 1. Collect configuration ----------------------- */
 
-/* ------------------------------------------------------------------ */
-/* 1) Grab credentials from env (or .env via Config helper)           */
-/* ------------------------------------------------------------------ */
-$cfg     = Config::getInstance();
-$dbHost  = $cfg->get('db_host')     ?? '';
-$dbName  = $cfg->get('db_name')     ?? 'Axialy_UI';
-$dbUser  = $cfg->get('db_user')     ?? '';
-$dbPass  = $cfg->get('db_password') ?? '';
-$dbPort  = getenv('UI_DB_PORT') ?: '3306';
+$required = [
+    'UI_DB_HOST',
+    'UI_DB_PORT',
+    'UI_DB_NAME',
+    'UI_DB_USER',
+    'UI_DB_PASSWORD',
+];
 
-/* sanity-check                                                           */
-if (!$dbHost || !$dbUser || !$dbPass) {
-    throw new RuntimeException(
-        'UI DB credentials missing – set UI_DB_* env variables or .env file.'
-    );
+/**
+ * If a .env file exists (written by the GitHub Actions deploy step) parse
+ * it and inject any key=value pairs that are not already present in the
+ * environment.  The parser is deliberately minimal but is sufficient for
+ * the simple format produced by the pipeline.
+ */
+$rootDir = dirname(__DIR__);          // …/var/www/axialy-ui
+$envFile = $rootDir . '/.env';
+
+if (is_readable($envFile)) {
+    foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+        // skip comments / empty lines
+        if ($line[0] === '#' || !str_contains($line, '=')) {
+            continue;
+        }
+        [$key, $val] = array_map('trim', explode('=', $line, 2));
+        if ($key !== '' && getenv($key) === false) {
+            putenv("$key=$val");
+            $_ENV[$key]    = $val;
+            $_SERVER[$key] = $val;
+        }
+    }
 }
 
-/* ------------------------------------------------------------------ */
-/* 2) PDO connection (preferred)                                       */
-/* ------------------------------------------------------------------ */
-$dsn = sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
-               $dbHost, $dbPort, $dbName);
+/* ---------- 2. Ensure everything we need is present -------- */
+
+foreach ($required as $key) {
+    if (($val = getenv($key)) === false || $val === '') {
+        throw new RuntimeException(
+            'UI DB credentials missing – set UI_DB_* env variables or provide a .env file.'
+        );
+    }
+}
+
+/* ---------- 3. Create a PDO connection -------------------- */
+
+$dsn = sprintf(
+    'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
+    getenv('UI_DB_HOST'),
+    getenv('UI_DB_PORT'),
+    getenv('UI_DB_NAME')
+);
 
 try {
-    /** @var PDO $pdo */
     $pdo = new PDO(
-        $dsn, $dbUser, $dbPass,
+        $dsn,
+        getenv('UI_DB_USER'),
+        getenv('UI_DB_PASSWORD'),
         [
             PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_PERSISTENT         => false,
         ]
     );
-} catch (Throwable $e) {
-    error_log('[PDO] DB connection failed: '.$e->getMessage());
-    die('Database connection error.');
+} catch (PDOException $e) {
+    // log internally but don’t leak details to the client
+    error_log('[Axialy UI] DB connection failed: ' . $e->getMessage());
+    http_response_code(500);
+    exit('Internal server error.');
 }
 
-/* ------------------------------------------------------------------ */
-/* 3) Legacy mysqli for a few old queries                              */
-/* ------------------------------------------------------------------ */
-$mysqliDsn = mysqli_init();
-$mysqliDsn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 5);
-if (!$mysqliDsn->real_connect($dbHost, $dbUser, $dbPass, $dbName, (int)$dbPort)) {
-    error_log('[MySQLi] connect_error: '.$mysqliDsn->connect_error);
-    die('Database connection error.');
-}
-$conn = $mysqliDsn;     // keep original variable name for legacy code
+return $pdo;
