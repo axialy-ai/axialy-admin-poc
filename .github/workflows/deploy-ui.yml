@@ -1,0 +1,201 @@
+name: Deploy Axialy UI
+
+on:
+  workflow_dispatch:
+    inputs:
+      droplet_name:
+        description: "Droplet hostname"
+        default: "axialy-ui-prod"
+      region:
+        description: "DigitalOcean region"
+        default: sfo3
+      size:
+        description: "Droplet size slug"
+        default: s-1vcpu-2gb
+
+jobs:
+  deploy-ui:
+    runs-on: ubuntu-latest
+
+    env:
+      # ► These are **GitHub Secrets** you already store for Admin,
+      #   but names are ui-specific so they can differ if needed.
+      TF_VAR_do_token:       ${{ secrets.DO_PAT }}
+      DROPLET_SSH_KEY:       ${{ secrets.DO_SSH_PRIVATE_KEY }}
+      DROPLET_SSH_PASSPHRASE:${{ secrets.DO_SSH_KEY_PASSPHRASE }}
+
+      # DB credentials for UI (managed cluster you provisioned earlier)
+      UI_DB_HOST:     ${{ secrets.UI_DB_HOST }}
+      UI_DB_PORT:     ${{ secrets.UI_DB_PORT }}
+      UI_DB_NAME:     ${{ secrets.UI_DB_NAME }}
+      UI_DB_USER:     ${{ secrets.UI_DB_USER }}
+      UI_DB_PASSWORD: ${{ secrets.UI_DB_PASSWORD }}
+
+      # Shared misc. config
+      API_BASE_URL:        ${{ secrets.API_BASE_URL }}
+      APP_BASE_URL:        ${{ secrets.APP_BASE_URL }}
+      INTERNAL_API_KEY:    ${{ secrets.INTERNAL_API_KEY }}
+      STRIPE_API_KEY:      ${{ secrets.STRIPE_API_KEY }}
+      STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+      STRIPE_WEBHOOK_SECRET:  ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+
+    steps:
+    # ───────────── 1) checkout only what we need ─────────────
+    - uses: actions/checkout@v4
+      with:
+        sparse-checkout: |
+          axialy-ui-product
+          infra/droplet          # same Terraform module you used for Admin
+
+    # ───────────── 2) Terraform droplet (re-use module) ──────
+    - uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.6
+        terraform_wrapper: false
+
+    - name: Terraform apply (UI droplet)
+      id: tf
+      working-directory: infra/droplet
+      run: |
+        terraform init -input=false
+        terraform apply -input=false -auto-approve \
+          -var="droplet_name=${{ github.event.inputs.droplet_name }}" \
+          -var="region=${{ github.event.inputs.region }}" \
+          -var="droplet_size=${{ github.event.inputs.size }}" \
+          -var="ssh_key_fingerprint=${{ secrets.DO_SSH_KEY_FINGERPRINT }}" \
+          -var="component_tag=ui"
+        echo "droplet_ip=$(terraform output -raw droplet_ip)" >>"$GITHUB_OUTPUT"
+
+    # ───────────── 3) give it 60 s for cloud-init ────────────
+    - run: sleep 60
+
+    # ───────────── 4) push code & bootstrap nginx/php ────────
+    - name: Deploy sources + bootstrap stack
+      env:
+        DROPLET_IP: ${{ steps.tf.outputs.droplet_ip }}
+      run: |
+        #################################################################
+        #  a) SSH helpers (same as Admin)                               #
+        #################################################################
+        mkdir -p ~/.ssh && chmod 700 ~/.ssh
+        echo "$DROPLET_SSH_KEY" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        ssh-keyscan -H $DROPLET_IP >> ~/.ssh/known_hosts 2>/dev/null
+
+        sudo apt-get update -qq && sudo apt-get install -y expect
+        cat > ssh.exp <<'EOF'
+        #!/usr/bin/expect -f
+        set key  [lindex $argv 0]; set host [lindex $argv 1]
+        set pass [lindex $argv 2]; set cmd  [lindex $argv 3]
+        set timeout 300
+        spawn ssh -i $key -o StrictHostKeyChecking=no root@$host $cmd
+        expect { "passphrase" {send "$pass\r"; exp_continue} eof }
+        EOF
+        chmod +x ssh.exp
+
+        cat > scp.exp <<'EOF'
+        #!/usr/bin/expect -f
+        set key [lindex $argv 0]; set src [lindex $argv 1]; set dst [lindex $argv 2]
+        set pass [lindex $argv 3]; set timeout 300
+        spawn scp -i $key -o StrictHostKeyChecking=no $src $dst
+        expect { "passphrase" {send "$pass\r"; exp_continue} eof }
+        EOF
+        chmod +x scp.exp
+
+        #################################################################
+        #  b) bootstrap script copied to droplet                        #
+        #################################################################
+        cat > deploy.sh <<'BOOT'
+        #!/usr/bin/env bash
+        set -e
+        wait_for_apt(){
+          while fuser /var/lib/apt/lists/lock >/dev/null 2>&1 \
+             || fuser /var/lib/dpkg/lock >/dev/null 2>&1 \
+             || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+            echo "Waiting for apt/dpkg lock…"; sleep 5
+          done
+        }
+        wait_for_apt
+        apt-get update -qq
+        wait_for_apt
+        apt-get install -y nginx php8.1-fpm php8.1-{mysql,mbstring,xml,curl,zip,gd}
+
+        # PHP settings identical to Admin
+        sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
+        systemctl restart php8.1-fpm
+
+        # Nginx vhost
+        cat >/etc/nginx/sites-available/axialy-ui <<'NG'
+        server {
+          listen 80 default_server;
+          listen [::]:80 default_server;
+          root /var/www/axialy-ui;
+          index index.php index.html;
+          server_name _;
+          location / { try_files $uri $uri/ /index.php?$query_string; }
+          location ~ \.php$ {
+              include snippets/fastcgi-php.conf;
+              fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+          }
+          location ~ /\. { deny all; }
+          add_header X-Frame-Options "SAMEORIGIN" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-XSS-Protection "1; mode=block" always;
+        }
+NG
+        ln -sf /etc/nginx/sites-available/axialy-ui /etc/nginx/sites-enabled/
+        rm -f /etc/nginx/sites-enabled/default
+        nginx -t
+        systemctl restart nginx
+        BOOT
+
+        ./scp.exp ~/.ssh/deploy_key deploy.sh root@$DROPLET_IP:/tmp/ $DROPLET_SSH_PASSPHRASE
+        ./ssh.exp ~/.ssh/deploy_key $DROPLET_IP $DROPLET_SSH_PASSPHRASE \
+          "chmod +x /tmp/deploy.sh && /tmp/deploy.sh"
+
+        #################################################################
+        #  c) copy application code                                     #
+        #################################################################
+        tar -czf ui.tar.gz axialy-ui-product
+        ./scp.exp ~/.ssh/deploy_key ui.tar.gz root@$DROPLET_IP:/tmp/ $DROPLET_SSH_PASSPHRASE
+        ./ssh.exp ~/.ssh/deploy_key $DROPLET_IP $DROPLET_SSH_PASSPHRASE \
+          "mkdir -p /var/www/axialy-ui && tar -xzf /tmp/ui.tar.gz -C /var/www/axialy-ui && \
+           chown -R www-data:www-data /var/www/axialy-ui"
+
+        #################################################################
+        #  d) write .env with runtime-specific vars                     #
+        #################################################################
+        cat > .env <<ENV
+        UI_DB_HOST=$UI_DB_HOST
+        UI_DB_PORT=$UI_DB_PORT
+        UI_DB_NAME=$UI_DB_NAME
+        UI_DB_USER=$UI_DB_USER
+        UI_DB_PASSWORD=$UI_DB_PASSWORD
+        API_BASE_URL=$API_BASE_URL
+        APP_BASE_URL=$APP_BASE_URL
+        INTERNAL_API_KEY=$INTERNAL_API_KEY
+        STRIPE_API_KEY=$STRIPE_API_KEY
+        STRIPE_PUBLISHABLE_KEY=$STRIPE_PUBLISHABLE_KEY
+        STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET
+        ENV
+        ./scp.exp ~/.ssh/deploy_key .env root@$DROPLET_IP:/var/www/axialy-ui/.env $DROPLET_SSH_PASSPHRASE
+        ./ssh.exp ~/.ssh/deploy_key $DROPLET_IP $DROPLET_SSH_PASSPHRASE \
+          "chmod 640 /var/www/axialy-ui/.env && chown www-data:www-data /var/www/axialy-ui/.env"
+
+    # ───────────── 5) Smoke test ─────────────────────────────────────
+    - name: Smoke-test UI
+      env:
+        IP: ${{ steps.tf.outputs.droplet_ip }}
+      run: |
+        echo "Testing http://$IP/login.php"
+        code=$(curl -s -o /dev/null -w '%{http_code}' http://$IP/login.php || echo "000")
+        if [ "$code" != "200" ]; then
+          echo "UI not responding (HTTP $code)"; exit 1; fi
+        echo "✅ Axialy UI reachable."
+
+    # ───────────── 6) Friendly summary ───────────────────────────────
+    - run: |
+        echo "========================================"
+        echo "Axialy UI deployed successfully!"
+        echo "Dashboard ➜ http://${{ steps.tf.outputs.droplet_ip }}/"
+        echo "========================================"
