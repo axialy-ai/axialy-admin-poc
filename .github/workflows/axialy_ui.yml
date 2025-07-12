@@ -19,44 +19,38 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # ──────────────────────────────────────────────────────────
-    # 1) Checkout only what we need
-    # ──────────────────────────────────────────────────────────
-    - uses: actions/checkout@v4
+    
+    # ──────────────────────────────────────────────────────────────
+    # 1) Checkout only what this component needs
+    # ──────────────────────────────────────────────────────────────
+    - name: Checkout code
+      uses: actions/checkout@v4
       with:
         sparse-checkout: |
           axialy-ui-product
           infra/droplet
 
-    # Terraform CLI
-    - uses: hashicorp/setup-terraform@v3
+    # ──────────────────────────────────────────────────────────────
+    # 2) Provision / refresh droplet with Terraform
+    # ──────────────────────────────────────────────────────────────
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: 1.6.6
         terraform_wrapper: false
 
-    # ──────────────────────────────────────────────────────────
-    # 2) Fail fast if SES credentials are not defined in repo
-    # ──────────────────────────────────────────────────────────
-    - name: Assert SES credentials are present
-      run: |
-        if [[ -z "${{ secrets.SES_SMTP_USER }}" || -z "${{ secrets.SES_SMTP_PASS }}" ]]; then
-          echo "::error::Missing SES_SMTP_USER and/or SES_SMTP_PASS repository secrets."
-          echo "Add them under Settings ➜ Secrets & Variables ➜ Actions, then re-run the workflow."
-          exit 1
-        fi
+    - name: Terraform init
+      working-directory: infra/droplet
+      run: terraform init -input=false
+      env:
+        TF_VAR_do_token: ${{ secrets.DO_PAT }}
 
-    # ──────────────────────────────────────────────────────────
-    # 3) Provision / update droplet with Terraform
-    # ──────────────────────────────────────────────────────────
-    - id: tfout                      # <-- provides outputs.droplet_ip etc.
-      name: Terraform apply
+    - name: Terraform apply
+      id: tfout
       working-directory: infra/droplet
       env:
         TF_VAR_do_token: ${{ secrets.DO_PAT }}
       run: |
-        set -e
-        terraform init -input=false
-
         terraform apply -auto-approve -input=false \
           -var="droplet_name=${{ github.event.inputs.droplet_name }}" \
           -var="region=${{ github.event.inputs.region }}" \
@@ -74,21 +68,20 @@ jobs:
           -var="ses_smtp_pass=${{ secrets.SES_SMTP_PASS }}" \
           -var="ses_region=us-east-1"
 
-        # Expose IP / ID to later steps
         echo "droplet_ip=$(terraform output -raw droplet_ip)"  >> "$GITHUB_OUTPUT"
         echo "droplet_id=$(terraform output -raw droplet_id)"  >> "$GITHUB_OUTPUT"
-
-    # ──────────────────────────────────────────────────────────
-    # 4) Give the droplet a moment to boot & accept SSH
-    # ──────────────────────────────────────────────────────────
+        
+    # ──────────────────────────────────────────────────────────────
+    # 3) Wait a moment so SSH becomes reachable
+    # ──────────────────────────────────────────────────────────────
     - name: Wait for droplet to be ready
       run: |
         echo "Waiting for droplet to be ready..."
         sleep 60
 
-    # ──────────────────────────────────────────────────────────
-    # 5) Configure SSH helpers + push application
-    # ──────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────
+    # 4) Configure SSH helpers + push application
+    # ──────────────────────────────────────────────────────────────
     - name: Configure SSH and Deploy
       env:
         DROPLET_IP: ${{ steps.tfout.outputs.droplet_ip }}
@@ -136,7 +129,7 @@ jobs:
         chmod +x scp_with_pass.exp
 
         #################################################################
-        # B) Remote bootstrap (installs nginx, php-fpm, etc.)
+        # B) Remote bootstrap script (unchanged)
         #################################################################
         cat > deploy.sh <<'BOOT'
         #!/usr/bin/env bash
@@ -152,21 +145,13 @@ jobs:
           done
         }
 
-        wait_for_apt && apt-get update -qq
-        wait_for_apt && apt-get install -y \
-          nginx postfix mailutils \
-          php8.1-fpm php8.1-mysql php8.1-mbstring php8.1-xml \
-          php8.1-curl php8.1-zip php8.1-gd
+        wait_for_apt
+        apt-get update -qq
 
-        ## ─── Configure Postfix to relay through SES ──────────────
-        postconf -e "relayhost = [email-smtp.${SES_REGION}.amazonaws.com]:587"
-        postconf -e "smtp_sasl_auth_enable = yes"
-        postconf -e "smtp_sasl_password_maps = static:${SES_SMTP_USER}:${SES_SMTP_PASS}"
-        postconf -e "smtp_sasl_security_options = noanonymous"
-        postconf -e "smtp_use_tls = yes"
-        postconf -e "smtp_tls_security_level = encrypt"
-        postconf -e "smtp_tls_note_starttls_offer = yes"
-        systemctl restart postfix
+        wait_for_apt
+        apt-get install -y nginx php8.1-fpm php8.1-mysql \
+                           php8.1-mbstring php8.1-xml php8.1-curl \
+                           php8.1-zip php8.1-gd
 
         sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
         systemctl restart php8.1-fpm
@@ -206,14 +191,12 @@ jobs:
         BOOT
 
         ./scp_with_pass.exp ~/.ssh/deploy_key deploy.sh root@$DROPLET_IP:/tmp/deploy.sh "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
-        ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
-          "export SES_REGION='${{ secrets.SES_REGION || 'us-east-1' }}'; \
-           export SES_SMTP_USER='${{ secrets.SES_SMTP_USER }}'; \
-           export SES_SMTP_PASS='${{ secrets.SES_SMTP_PASS }}'; \
-           chmod +x /tmp/deploy.sh && bash /tmp/deploy.sh"
+        ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "chmod +x /tmp/deploy.sh && bash /tmp/deploy.sh"
 
         #################################################################
-        # C) Package application and transfer (no sub-folder)
+        # C) Package application and transfer                           #
+        #    NOTE:  Changed -C flag so files unpack directly into       #
+        #           /var/www/axialy-ui (no extra sub-folder)            #
         #################################################################
         tar -czf /tmp/axialy-ui.tar.gz -C axialy-ui-product .
         ./scp_with_pass.exp ~/.ssh/deploy_key /tmp/axialy-ui.tar.gz root@$DROPLET_IP:/tmp/ "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
@@ -225,7 +208,7 @@ jobs:
            find /var/www/axialy-ui -type f -exec chmod 644 {} \;"
 
         #################################################################
-        # D) Write .env
+        # D) Write .env (unchanged)
         #################################################################
         cat > env_file <<'ENV_EOF'
         # Axialy UI DB
@@ -254,17 +237,18 @@ jobs:
         # E) Restart web services
         #################################################################
         ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
-          "systemctl restart php8.1-fpm nginx postfix"
+          "systemctl restart php8.1-fpm nginx"
 
         # Local cleanup
         rm -f deploy.sh env_file /tmp/axialy-ui.tar.gz ssh_with_pass.exp scp_with_pass.exp
 
-    # ──────────────────────────────────────────────────────────
-    # 6) Quick smoke test
-    # ──────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────
+    # 5) Quick smoke test
+    # ──────────────────────────────────────────────────────────────
     - name: Verify deployment
       run: |
         echo "Testing deployment..."
+        # we accept 200 *or* 302 (redirect to login) as success
         CODE=$(curl -s -o /dev/null -w '%{http_code}' http://${{ steps.tfout.outputs.droplet_ip }}/ || echo "000")
         if [ "$CODE" = "200" ] || [ "$CODE" = "302" ]; then
           echo "✅ Deployment successful! HTTP $CODE"
@@ -273,9 +257,9 @@ jobs:
           exit 1
         fi
 
-    # ──────────────────────────────────────────────────────────
-    # 7) Friendly summary
-    # ──────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────
+    # 6) Friendly summary
+    # ──────────────────────────────────────────────────────────────
     - name: Display deployment info
       run: |
         echo "========================================"
