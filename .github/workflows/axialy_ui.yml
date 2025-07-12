@@ -1,5 +1,4 @@
 name: Axialy UI
-
 on:
   workflow_dispatch:
     inputs:
@@ -17,36 +16,31 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
-    
-    # ──────────────────────────────────────────────────────────────
-    # 1) Checkout only what this component needs
-    # ──────────────────────────────────────────────────────────────
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
       with:
         sparse-checkout: |
           axialy-ui-product
           infra/droplet
 
-    # ──────────────────────────────────────────────────────────────
-    # 2) Provision / refresh droplet with Terraform
-    # ──────────────────────────────────────────────────────────────
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
+    - uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: 1.6.6
         terraform_wrapper: false
 
-    - name: Terraform init
-      working-directory: infra/droplet
-      run: terraform init -input=false
-      env:
-        TF_VAR_do_token: ${{ secrets.DO_PAT }}
+    # ──────────────────────────────────────────────────────────
+    # NEW: hard-fail fast if SES secrets are missing
+    # ──────────────────────────────────────────────────────────
+    - name: Assert SES credentials are present
+      run: |
+        if [[ -z "${{ secrets.SES_SMTP_USER }}" || -z "${{ secrets.SES_SMTP_PASS }}" ]]; then
+          echo "::error::Missing SES_SMTP_USER and/or SES_SMTP_PASS repository secrets."
+          echo "Add them under Settings ➜ Secrets & Variables ➜ Actions, then re-run the workflow."
+          exit 1
+        fi
 
+    # Terraform apply — unchanged except that it now *guarantees* real values
     - name: Terraform apply
-      id: tfout
       working-directory: infra/droplet
       env:
         TF_VAR_do_token: ${{ secrets.DO_PAT }}
@@ -70,7 +64,8 @@ jobs:
 
         echo "droplet_ip=$(terraform output -raw droplet_ip)"  >> "$GITHUB_OUTPUT"
         echo "droplet_id=$(terraform output -raw droplet_id)"  >> "$GITHUB_OUTPUT"
-        
+
+    # … all later steps remain untouched …        
     # ──────────────────────────────────────────────────────────────
     # 3) Wait a moment so SSH becomes reachable
     # ──────────────────────────────────────────────────────────────
