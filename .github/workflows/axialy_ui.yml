@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    
     # ──────────────────────────────────────────────────────────────
     # 1) Checkout only what this component needs
     # ──────────────────────────────────────────────────────────────
@@ -62,11 +63,14 @@ jobs:
           -var="admin_default_user=${{ secrets.ADMIN_DEFAULT_USER }}" \
           -var="admin_default_email=${{ secrets.ADMIN_DEFAULT_EMAIL }}" \
           -var="admin_default_password=${{ secrets.ADMIN_DEFAULT_PASSWORD }}" \
-          -var="component_tag=ui"
+          -var="component_tag=ui" \
+          -var="ses_smtp_user=${{ secrets.SES_SMTP_USER }}" \
+          -var="ses_smtp_pass=${{ secrets.SES_SMTP_PASS }}" \
+          -var="ses_region=us-east-1"
 
         echo "droplet_ip=$(terraform output -raw droplet_ip)"  >> "$GITHUB_OUTPUT"
         echo "droplet_id=$(terraform output -raw droplet_id)"  >> "$GITHUB_OUTPUT"
-
+        
     # ──────────────────────────────────────────────────────────────
     # 3) Wait a moment so SSH becomes reachable
     # ──────────────────────────────────────────────────────────────
