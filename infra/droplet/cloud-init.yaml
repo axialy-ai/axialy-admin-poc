@@ -1,4 +1,3 @@
-# ─── infra/droplet/cloud-init.yaml ────────────────────────────────────────────
 #cloud-config
 package_update: true
 package_upgrade: true
@@ -16,11 +15,7 @@ packages:
   - postfix
   - mailutils
   - libsasl2-modules
-  - rsyslog                       # make sure /var/log/mail.log is generated
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 1. Put DB creds & other env in /etc/environment (shared by PHP)
-# ──────────────────────────────────────────────────────────────────────────────
 write_files:
   - path: /etc/environment
     content: |
@@ -41,56 +36,29 @@ write_files:
       ADMIN_DEFAULT_PASSWORD="${admin_default_password}"
     append: true
 
-  # 2. Smart-host credentials for Postfix ──────
   - path: /etc/postfix/sasl_passwd
-    owner: root:root
-    permissions: '0600'
     content: |
       [${smtp_host}]:${smtp_port} ${smtp_user}:${smtp_password}
+    owner: root:root
+    permissions: '0600'
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 3. One-time commands run *after* packages are in place
-# ──────────────────────────────────────────────────────────────────────────────
 runcmd:
-  # ── Basic firewall ─────────────────────────────────
   - ufw allow 22/tcp
   - ufw allow 80/tcp
   - ufw allow 443/tcp
   - ufw --force enable
-
-  # ── Harden PHP-FPM ────────────────────────────────
   - sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
   - systemctl restart php8.1-fpm
-
-  # ── App directory skeleton ────────────────────────
   - mkdir -p /var/www/axialy-admin
   - chown -R www-data:www-data /var/www/axialy-admin
   - find /var/www/axialy-admin -type d -exec chmod 755 {} \;
-
-  # ── Configure Postfix for GoDaddy smart-host ──────
   - |
-      set -e
-
-      # 3-a. Build the hashed credentials map
       postmap /etc/postfix/sasl_passwd
-
-      # 3-b. Apply *all* relay settings atomically
       postconf -e "relayhost = [${smtp_host}]:${smtp_port}"
       postconf -e "smtp_sasl_auth_enable = yes"
       postconf -e "smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd"
       postconf -e "smtp_sasl_security_options = noanonymous"
-      postconf -e "smtp_sasl_mechanism_filter = login,plain"
-
-      # TLS: wrapped SMTPS (port 465)
-      postconf -e "smtp_tls_security_level = encrypt"
-      postconf -e "smtp_tls_wrappermode  = yes"
-      postconf -e "smtp_use_tls         = yes"
-      postconf -e "smtp_tls_CAfile      = /etc/ssl/certs/ca-certificates.crt"
-
-      # Identity the relay will see
+      postconf -e "smtp_use_tls = yes"
+      postconf -e "smtp_tls_wrappermode = yes"
       postconf -e "myhostname = $(hostname).axiaba.internal"
-
       systemctl restart postfix
-
-  # ── Make sure rsyslog is active so /var/log/mail.log is created ──
-  - systemctl enable --now rsyslog
