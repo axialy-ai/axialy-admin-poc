@@ -13,10 +13,9 @@ provider "digitalocean" {
   token = var.do_token
 }
 
-# ──────────────────────────────────────────────────────────────
-#  Droplet for *any* Axialy component (admin | ui | api)
-# ──────────────────────────────────────────────────────────────
-
+# ───────────────────────────────────────────────
+#  Droplet (works for admin | ui | api)
+# ───────────────────────────────────────────────
 resource "digitalocean_droplet" "axialy" {
   name     = var.droplet_name
   region   = var.region
@@ -27,6 +26,7 @@ resource "digitalocean_droplet" "axialy" {
   monitoring = true
   backups    = false
 
+  # cloud-init template with DB + SMTP creds
   user_data = templatefile("${path.module}/cloud-init.yaml", {
     db_host                = var.db_host
     db_port                = var.db_port
@@ -35,8 +35,6 @@ resource "digitalocean_droplet" "axialy" {
     admin_default_user     = var.admin_default_user
     admin_default_email    = var.admin_default_email
     admin_default_password = var.admin_default_password
-
-    /* NEW – pass SMTP relay creds into cloud-init */
     smtp_host              = var.smtp_host
     smtp_port              = var.smtp_port
     smtp_user              = var.smtp_user
@@ -46,54 +44,45 @@ resource "digitalocean_droplet" "axialy" {
   tags = ["axialy", var.component_tag, "web"]
 }
 
-/* firewall + outputs remain exactly the same */
-
-
-# ──────────────────────────────────────────────────────────────
-#  Firewall for this one droplet / component
-# ──────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────
+#  Firewall (unchanged logic)
+# ───────────────────────────────────────────────
 resource "digitalocean_firewall" "axialy" {
   name        = "axialy-${var.component_tag}-fw-${var.droplet_name}"
   droplet_ids = [digitalocean_droplet.axialy.id]
 
-  # SSH
   inbound_rule {
     protocol         = "tcp"
     port_range       = "22"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
 
-  # HTTP
   inbound_rule {
     protocol         = "tcp"
     port_range       = "80"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
 
-  # HTTPS
   inbound_rule {
     protocol         = "tcp"
     port_range       = "443"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
 
-  # Allow **all** outbound
   outbound_rule {
     protocol              = "tcp"
     port_range            = "1-65535"
     destination_addresses = ["0.0.0.0/0", "::/0"]
   }
+
   outbound_rule {
     protocol              = "udp"
     port_range            = "1-65535"
     destination_addresses = ["0.0.0.0/0", "::/0"]
   }
+
   outbound_rule {
     protocol              = "icmp"
     destination_addresses = ["0.0.0.0/0", "::/0"]
   }
 }
-
-# ──────────────────────────────────────────────────────────────
-#  NOTE: outputs moved to outputs.tf to avoid duplication
-# ──────────────────────────────────────────────────────────────
