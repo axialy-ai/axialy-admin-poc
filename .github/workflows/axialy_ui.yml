@@ -133,7 +133,6 @@ jobs:
         set -euo pipefail
         echo ">>> Configuring Axialy UI stack..."
 
-        # robust apt/dpkg lock-waiter (same as Admin workflow)
         wait_for_apt() {
           while fuser /var/lib/apt/lists/lock >/dev/null 2>&1 \
              || fuser /var/lib/dpkg/lock >/dev/null 2>&1 \
@@ -151,11 +150,9 @@ jobs:
           nginx php8.1-fpm php8.1-mysql php8.1-mbstring php8.1-xml \
           php8.1-curl php8.1-zip php8.1-gd php8.1-intl composer
 
-        # Harden PHP-FPM a bit
         sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
         systemctl restart php8.1-fpm
 
-        # minimal vhost
         cat > /etc/nginx/sites-available/axialy-ui <<'NGINX'
         server {
           listen 80 default_server;
@@ -234,7 +231,9 @@ jobs:
 
         # ------------ Composer (runs as www-data) ------------
         ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
-          "cd /var/www/axialy-ui && \
+          "sudo -u www-data mkdir -p /var/www/.cache/composer && \
+           sudo -u www-data composer config --global cache-dir /var/www/.cache/composer && \
+           cd /var/www/axialy-ui && \
            sudo -u www-data composer install --no-dev --optimize-autoloader --no-interaction && \
            chown -R www-data:www-data /var/www/axialy-ui/vendor"
 
