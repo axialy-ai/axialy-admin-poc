@@ -1,26 +1,13 @@
-/* ──────────────────────────────────────────────────────────────
- *  Variables for the Axialy managed-DB module
- * ──────────────────────────────────────────────────────────── */
+variable "db_instance_id"     { type = string }
+variable "db_instance_class"  { type = string }
+variable "allocated_storage"  { type = number }
 
-variable "do_token" {
-  description = "DigitalOcean API token (set via TF_VAR_do_token)"
-  type        = string
-  sensitive   = true
+variable "aws_region" {
+  type    = string
+  default = "us-west-2"
 }
 
-variable "db_cluster_name" {
-  description = "Human-readable name for the managed MySQL cluster"
-  type        = string
-}
-
-variable "region" {
-  description = "DigitalOcean region where the cluster will live"
-  type        = string
-  default     = "nyc3"
-}
-
-variable "db_size" {
-  description = "Slug for the database plan/size (e.g. db-s-1vcpu-1gb)"
-  type        = string
-  default     = "db-s-1vcpu-1gb"   # matches the default in axialy_db.yml
+variable "master_username" {
+  type    = string
+  default = "axialy_root"
 }
