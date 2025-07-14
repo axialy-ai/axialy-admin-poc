@@ -231,7 +231,9 @@ jobs:
 
         # ------------ Composer (runs as www-data) ------------
         ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
-          "sudo -u www-data mkdir -p /var/www/.cache/composer && \
+          "mkdir -p /var/www/.cache && \
+           chown www-data:www-data /var/www/.cache && \
+           sudo -u www-data mkdir -p /var/www/.cache/composer && \
            sudo -u www-data composer config --global cache-dir /var/www/.cache/composer && \
            cd /var/www/axialy-ui && \
            sudo -u www-data composer install --no-dev --optimize-autoloader --no-interaction && \
