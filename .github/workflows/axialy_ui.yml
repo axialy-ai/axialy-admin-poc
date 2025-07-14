@@ -114,6 +114,9 @@ jobs:
           EOF
           chmod +x scp_with_pass.exp
 
+          # ────────────────────────────────────────────────
+          #  Remote bootstrap script
+          # ────────────────────────────────────────────────
           cat > deploy.sh <<'BOOT'
           #!/usr/bin/env bash
           set -e
@@ -132,13 +135,16 @@ jobs:
           apt-get update -qq
 
           wait_for_apt
+          # ➊ Composer is now part of base packages
           apt-get install -y nginx php8.1-fpm php8.1-mysql \
                              php8.1-mbstring php8.1-xml php8.1-curl \
-                             php8.1-zip php8.1-gd
+                             php8.1-zip php8.1-gd composer
 
+          # PHP hardening
           sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
           systemctl restart php8.1-fpm
 
+          # Nginx vhost
           cat > /etc/nginx/sites-available/axialy-ui <<'NGINX_CONF'
           server {
             listen 80 default_server;
@@ -176,6 +182,9 @@ jobs:
           ./scp_with_pass.exp ~/.ssh/deploy_key deploy.sh root@$DROPLET_IP:/tmp/deploy.sh "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
           ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" "chmod +x /tmp/deploy.sh && bash /tmp/deploy.sh"
 
+          # ──────────────────────────────
+          #  Push application sources
+          # ──────────────────────────────
           tar -czf /tmp/axialy-ui.tar.gz -C axialy-ui-product .
           ./scp_with_pass.exp ~/.ssh/deploy_key /tmp/axialy-ui.tar.gz root@$DROPLET_IP:/tmp/ "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
           ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
@@ -186,7 +195,7 @@ jobs:
              find /var/www/axialy-ui -type f -exec chmod 644 {} \;"
 
           # --------------------------------------------------------
-          #  UPDATED .env  → now includes SMTP relay configuration
+          #  .env with DB + SMTP secrets
           # --------------------------------------------------------
           cat > env_file <<'ENV_EOF'
           # Axialy UI DB
@@ -201,7 +210,7 @@ jobs:
           APP_BASE_URL=${{ secrets.APP_BASE_URL }}
           INTERNAL_API_KEY=${{ secrets.INTERNAL_API_KEY }}
 
-          # SMTP smart-host (needed for verification e-mails)
+          # SMTP smart-host
           SMTP_HOST=${{ secrets.SMTP_HOST }}
           SMTP_PORT=${{ secrets.SMTP_PORT }}
           SMTP_USER=${{ secrets.SMTP_USER }}
@@ -217,6 +226,15 @@ jobs:
           ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
             "chmod 640 /var/www/axialy-ui/.env && chown www-data:www-data /var/www/axialy-ui/.env"
 
+          # ──────────────────────────────
+          #  ➋ Install Composer packages
+          # ──────────────────────────────
+          ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
+            "cd /var/www/axialy-ui && \
+             sudo -u www-data composer install --no-dev --optimize-autoloader --no-interaction && \
+             chown -R www-data:www-data /var/www/axialy-ui/vendor"
+
+          # restart services
           ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
             "systemctl restart php8.1-fpm nginx"
 
