@@ -6,13 +6,13 @@ on:
       droplet_name:
         description: "EC2 Name tag"
         required: true
-        default: "axialy-admin-prod"
+        default: axialy-admin-prod
       region:
         description: "AWS region (e.g. us-west-2)"
         required: true
         default: us-west-2
       size:
-        description: "EC2 instance class"
+        description: "EC2 instance type"
         required: true
         default: t3.small
 
@@ -20,9 +20,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION:    ${{ github.event.inputs.region }}
+      AWS_DEFAULT_REGION: ${{ github.event.inputs.region }}
 
     steps:
       - name: Checkout code
@@ -63,13 +63,12 @@ jobs:
             -var="smtp_port=${{ secrets.SMTP_PORT }}" \
             -var="smtp_user=${{ secrets.SMTP_USER }}" \
             -var="smtp_password=${{ secrets.SMTP_PASSWORD }}"
-
           echo "public_ip=$(terraform output -raw public_ip)" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for instance to be ready
+      - name: Wait for instance SSH
         run: sleep 60
 
-      - name: Configure SSH and Deploy
+      - name: Configure SSH and deploy
         env:
           HOST: ${{ steps.tfout.outputs.public_ip }}
         run: |
@@ -82,13 +81,13 @@ jobs:
           cat > ssh_with_pass.exp <<'EOF'
 #!/usr/bin/expect -f
 set timeout 300
-set ssh_key [lindex $argv 0]
-set host    [lindex $argv 1]
-set passph  [lindex $argv 2]
-set cmd     [lindex $argv 3]
-spawn ssh -i $ssh_key -o StrictHostKeyChecking=no ubuntu@$host $cmd
+set key [lindex $argv 0]
+set host [lindex $argv 1]
+set pph  [lindex $argv 2]
+set cmd  [lindex $argv 3]
+spawn ssh -i $key -o StrictHostKeyChecking=no ubuntu@$host $cmd
 expect {
-  "Enter passphrase for key*" { send "$passph\r"; exp_continue }
+  "Enter passphrase for key*" { send "$pph\r"; exp_continue }
   eof
 }
 EOF
@@ -96,34 +95,25 @@ EOF
           cat > scp_with_pass.exp <<'EOF'
 #!/usr/bin/expect -f
 set timeout 300
-set ssh_key [lindex $argv 0]
-set src     [lindex $argv 1]
-set dst     [lindex $argv 2]
-set passph  [lindex $argv 3]
-spawn scp -i $ssh_key -o StrictHostKeyChecking=no $src $dst
+set key [lindex $argv 0]
+set src [lindex $argv 1]
+set dst [lindex $argv 2]
+set pph [lindex $argv 3]
+spawn scp -i $key -o StrictHostKeyChecking=no $src $dst
 expect {
-  "Enter passphrase for key*" { send "$passph\r"; exp_continue }
+  "Enter passphrase for key*" { send "$pph\r"; exp_continue }
   eof
 }
 EOF
           chmod +x scp_with_pass.exp
-          cat > deploy.sh <<'DEPLOY_SCRIPT'
+          cat > deploy.sh <<'DEPLOY'
 #!/bin/bash
 set -e
-wait_for_apt() {
-  while fuser /var/lib/apt/lists/lock >/dev/null 2>&1 ||
-        fuser /var/lib/dpkg/lock >/dev/null 2>&1     ||
-        fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 ; do
-    sleep 5
-  done
-}
-wait_for_apt
-apt-get update -qq
-wait_for_apt
-apt-get install -y nginx php8.1-fpm php8.1-mysql php8.1-mbstring php8.1-xml php8.1-curl php8.1-zip php8.1-gd
+until apt-get -yq update; do sleep 5; done
+until DEBIAN_FRONTEND=noninteractive apt-get -yq install nginx php8.1-fpm php8.1-mysql php8.1-mbstring php8.1-xml php8.1-curl php8.1-zip php8.1-gd; do sleep 5; done
 sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
 systemctl restart php8.1-fpm
-cat > /etc/nginx/sites-available/axialy-admin <<'NGINX_CONF'
+cat > /etc/nginx/sites-available/axialy-admin <<'NGINX'
 server {
   listen 80 default_server;
   listen [::]:80 default_server;
@@ -136,43 +126,36 @@ server {
     fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
   }
   location ~ /\. { deny all; }
-  add_header X-Frame-Options "SAMEORIGIN" always;
-  add_header X-Content-Type-Options "nosniff" always;
-  add_header X-XSS-Protection "1; mode=block" always;
+  add_header X-Frame-Options "SAMEORIGIN";
+  add_header X-Content-Type-Options "nosniff";
+  add_header X-XSS-Protection "1; mode=block";
 }
-NGINX_CONF
+NGINX
 ln -sf /etc/nginx/sites-available/axialy-admin /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl restart nginx
-DEPLOY_SCRIPT
+DEPLOY
           ./scp_with_pass.exp ~/.ssh/deploy_key deploy.sh ubuntu@$HOST:/tmp/deploy.sh "${{ secrets.EC2_SSH_PASSPHRASE }}"
           ./ssh_with_pass.exp ~/.ssh/deploy_key $HOST "${{ secrets.EC2_SSH_PASSPHRASE }}" "chmod +x /tmp/deploy.sh && sudo bash /tmp/deploy.sh"
-          cd axialy-admin-product
-          tar -czf /tmp/axialy-admin.tar.gz .
-          cd ..
+          cd axialy-admin-product && tar -czf /tmp/axialy-admin.tar.gz . && cd ..
           ./scp_with_pass.exp ~/.ssh/deploy_key /tmp/axialy-admin.tar.gz ubuntu@$HOST:/tmp/ "${{ secrets.EC2_SSH_PASSPHRASE }}"
           ./ssh_with_pass.exp ~/.ssh/deploy_key $HOST "${{ secrets.EC2_SSH_PASSPHRASE }}" "sudo mkdir -p /var/www/axialy-admin && sudo tar -xzf /tmp/axialy-admin.tar.gz -C /var/www/axialy-admin && sudo chown -R www-data:www-data /var/www/axialy-admin && sudo find /var/www/axialy-admin -type d -exec chmod 755 {} \; && sudo find /var/www/axialy-admin -type f -exec chmod 644 {} \; && sudo mv /var/www/axialy-admin/admin_login.http.php /var/www/axialy-admin/admin_login.php && sudo systemctl restart php8.1-fpm nginx"
           rm -f deploy.sh /tmp/axialy-admin.tar.gz ssh_with_pass.exp scp_with_pass.exp
 
       - name: Verify deployment
         run: |
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://${{ steps.tfout.outputs.public_ip }}/admin_login.php || echo 000)
-          if [ "$RESPONSE" != "200" ]; then
-            echo "Application returned HTTP $RESPONSE"
-            exit 1
-          fi
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' http://${{ steps.tfout.outputs.public_ip }}/admin_login.php || echo 000)
+          [ "$CODE" = "200" ]
 
-      - name: Display deployment info
+      - name: Deployment summary
         run: |
           echo "========================================"
           echo "Axialy Admin deployed successfully!"
-          echo "========================================"
-          echo "Access your application at:"
-          echo "  http://${{ steps.tfout.outputs.public_ip }}/admin_login.php"
-          echo ""
-          echo "Instance Details:"
-          echo "  Name : ${{ github.event.inputs.droplet_name }}"
-          echo "  IP   : ${{ steps.tfout.outputs.public_ip }}"
-          echo "  Type : ${{ github.event.inputs.size }}"
+          echo "----------------------------------------"
+          echo "URL   : http://${{ steps.tfout.outputs.public_ip }}/admin_login.php"
+          echo "Name  : ${{ github.event.inputs.droplet_name }}"
+          echo "IP    : ${{ steps.tfout.outputs.public_ip }}"
+          echo "Type  : ${{ github.event.inputs.size }}"
+          echo "Region: ${{ github.event.inputs.region }}"
           echo "========================================"
