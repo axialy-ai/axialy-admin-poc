@@ -1,5 +1,8 @@
 <?php
 // /includes/account_creation.php
+
+namespace AxiaBA;
+
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/mailer.php';
 
@@ -48,7 +51,7 @@ class AccountCreation
     public function sendVerificationEmail(
         string $email,
         string $token,
-        bool   $debug = false          // one-off verbose SMTP logging
+        bool   $debug = false
     ): bool {
         $verificationLink =
             rtrim($this->config->get('app_base_url') ?: '', '/')
@@ -109,7 +112,7 @@ class AccountCreation
         try {
             $this->pdo->beginTransaction();
 
-            /* 1) default organisation */
+            // 1) default organisation
             $stmt = $this->pdo->prepare(
                 'INSERT INTO default_organizations (default_organization_name)
                  VALUES (?)'
@@ -117,7 +120,7 @@ class AccountCreation
             $stmt->execute([$email]);
             $orgId = (int) $this->pdo->lastInsertId();
 
-            /* 2) user record */
+            // 2) user record
             $hashed = password_hash($password, PASSWORD_BCRYPT);
             $stmt = $this->pdo->prepare(
                 'INSERT INTO ui_users
@@ -126,7 +129,7 @@ class AccountCreation
             );
             $stmt->execute([$username, $hashed, $email, $orgId]);
 
-            /* 3) mark token used */
+            // 3) mark token used
             $stmt = $this->pdo->prepare(
                 'UPDATE email_verifications SET used = 1
                  WHERE email = ? AND used = 0'
