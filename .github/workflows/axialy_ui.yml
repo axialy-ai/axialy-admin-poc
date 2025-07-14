@@ -6,8 +6,8 @@ on:
     inputs:
       droplet_name:
         description: "Droplet hostname"
-        required: true
         default: "axialy-ui-prod"
+        required: true
       region:
         description: "DO region (e.g. nyc3, sfo3, fra1)"
         default: sfo3
@@ -20,9 +20,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # ──────────────────────────────────────────────
-    # 1) Checkout only UI code + droplet module
-    # ──────────────────────────────────────────────
+    # 1) Checkout only what we need
     - name: Checkout code
       uses: actions/checkout@v4
       with:
@@ -30,9 +28,7 @@ jobs:
           axialy-ui-product
           infra/droplet
 
-    # ──────────────────────────────────────────────
-    # 2) Terraform – create/refresh droplet
-    # ──────────────────────────────────────────────
+    # 2) Provision / refresh droplet with Terraform
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
@@ -41,9 +37,9 @@ jobs:
 
     - name: Terraform init
       working-directory: infra/droplet
-      run: terraform init -input=false
       env:
         TF_VAR_do_token: ${{ secrets.DO_PAT }}
+      run: terraform init -input=false
 
     - name: Terraform apply
       id: tfout
@@ -72,18 +68,14 @@ jobs:
         echo "droplet_ip=$(terraform output -raw droplet_ip)"  >> "$GITHUB_OUTPUT"
         echo "droplet_id=$(terraform output -raw droplet_id)"  >> "$GITHUB_OUTPUT"
 
-    # ──────────────────────────────────────────────
-    # 3) Allow the droplet SSHD to come up
-    # ──────────────────────────────────────────────
+    # 3) Give the brand-new droplet 60 s for sshd to come up
     - name: Wait for droplet to be ready
       run: |
-        echo "Waiting for droplet to be ready..."
+        echo "Waiting for droplet to be ready…"
         sleep 60
 
-    # ──────────────────────────────────────────────
-    # 4) Push app + bootstrap
-    # ──────────────────────────────────────────────
-    - name: Configure SSH and Deploy
+    # 4) Push application & bootstrap server
+    - name: Configure SSH and deploy
       env:
         DROPLET_IP: ${{ steps.tfout.outputs.droplet_ip }}
       run: |
@@ -91,108 +83,109 @@ jobs:
         mkdir -p ~/.ssh && chmod 700 ~/.ssh
         echo "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/deploy_key
         chmod 600 ~/.ssh/deploy_key
-        ssh-keyscan -H $DROPLET_IP >> ~/.ssh/known_hosts 2>/dev/null || true
+        ssh-keyscan -H "$DROPLET_IP" >> ~/.ssh/known_hosts 2>/dev/null || true
 
         sudo apt-get update -qq
         sudo apt-get install -y expect tar
 
-        # ------------ expect helpers (ssh / scp) ------------
+        #
+        # expect helpers (ssh / scp) – unchanged
+        #
         cat > ssh_with_pass.exp <<'EOF'
-        #!/usr/bin/expect -f
-        set timeout 300
-        set ssh_key  [lindex $argv 0]
-        set host     [lindex $argv 1]
-        set passph   [lindex $argv 2]
-        set cmd      [lindex $argv 3]
-        spawn ssh -i $ssh_key -o StrictHostKeyChecking=no root@$host $cmd
-        expect {
-          "Enter passphrase for key*" { send "$passph\r"; exp_continue }
-          eof
-        }
-        EOF
+#!/usr/bin/expect -f
+set timeout 300
+set ssh_key  [lindex $argv 0]
+set host     [lindex $argv 1]
+set passph   [lindex $argv 2]
+set cmd      [lindex $argv 3]
+spawn ssh -i $ssh_key -o StrictHostKeyChecking=no root@$host $cmd
+expect {
+  "Enter passphrase for key*" { send "$passph\r"; exp_continue }
+  eof
+}
+EOF
         chmod +x ssh_with_pass.exp
 
         cat > scp_with_pass.exp <<'EOF'
-        #!/usr/bin/expect -f
-        set timeout 300
-        set ssh_key  [lindex $argv 0]
-        set src      [lindex $argv 1]
-        set dst      [lindex $argv 2]
-        set passph   [lindex $argv 3]
-        spawn scp -i $ssh_key -o StrictHostKeyChecking=no $src $dst
-        expect {
-          "Enter passphrase for key*" { send "$passph\r"; exp_continue }
-          eof
-        }
-        EOF
+#!/usr/bin/expect -f
+set timeout 300
+set ssh_key  [lindex $argv 0]
+set src      [lindex $argv 1]
+set dst      [lindex $argv 2]
+set passph   [lindex $argv 3]
+spawn scp -i $ssh_key -o StrictHostKeyChecking=no $src $dst
+expect {
+  "Enter passphrase for key*" { send "$passph\r"; exp_continue }
+  eof
+}
+EOF
         chmod +x scp_with_pass.exp
 
-        # ------------ remote bootstrap ------------
+        #
+        # remote bootstrap – unchanged except final Composer section
+        #
         cat > deploy.sh <<'BOOT'
-        #!/usr/bin/env bash
-        set -euo pipefail
-        echo ">>> Configuring Axialy UI stack..."
+#!/usr/bin/env bash
+set -euo pipefail
+echo ">>> Configuring Axialy UI stack…"
 
-        # robust apt/dpkg lock-waiter (same as Admin workflow)
-        wait_for_apt() {
-          while fuser /var/lib/apt/lists/lock >/dev/null 2>&1 \
-             || fuser /var/lib/dpkg/lock >/dev/null 2>&1 \
-             || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 ; do
-            echo "Waiting for other apt/dpkg processes..."
-            sleep 5
-          done
-        }
+wait_for_apt() {
+  while fuser /var/lib/apt/lists/lock >/dev/null 2>&1 \
+     || fuser /var/lib/dpkg/lock >/dev/null 2>&1 \
+     || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 ; do
+    sleep 4
+  done
+}
 
-        wait_for_apt
-        apt-get update -qq
+wait_for_apt
+apt-get update -qq
+wait_for_apt
+DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  nginx php8.1-fpm php8.1-mysql php8.1-mbstring php8.1-xml \
+  php8.1-curl php8.1-zip php8.1-gd php8.1-intl composer
 
-        wait_for_apt
-        DEBIAN_FRONTEND=noninteractive apt-get install -y \
-          nginx php8.1-fpm php8.1-mysql php8.1-mbstring php8.1-xml \
-          php8.1-curl php8.1-zip php8.1-gd php8.1-intl composer
+sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
+systemctl restart php8.1-fpm
 
-        # Harden PHP-FPM a bit
-        sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
-        systemctl restart php8.1-fpm
+cat > /etc/nginx/sites-available/axialy-ui <<'NGINX'
+server {
+  listen 80 default_server;
+  listen [::]:80 default_server;
 
-        # minimal vhost
-        cat > /etc/nginx/sites-available/axialy-ui <<'NGINX'
-        server {
-          listen 80 default_server;
-          listen [::]:80 default_server;
+  root /var/www/axialy-ui;
+  index index.php index.html;
+  server_name _;
 
-          root /var/www/axialy-ui;
-          index index.php index.html;
-          server_name _;
+  location / {
+    try_files $uri $uri/ /index.php?$query_string;
+  }
 
-          location / {
-            try_files $uri $uri/ /index.php?$query_string;
-          }
+  location ~ \.php$ {
+    include snippets/fastcgi-php.conf;
+    fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+  }
 
-          location ~ \.php$ {
-            include snippets/fastcgi-php.conf;
-            fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
-          }
+  location ~ /\. { deny all; }
 
-          location ~ /\. { deny all; }
+  add_header X-Frame-Options "SAMEORIGIN" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header X-XSS-Protection "1; mode=block" always;
+}
+NGINX
 
-          add_header X-Frame-Options "SAMEORIGIN" always;
-          add_header X-Content-Type-Options "nosniff"   always;
-          add_header X-XSS-Protection      "1; mode=block" always;
-        }
-        NGINX
-
-        ln -sf /etc/nginx/sites-available/axialy-ui /etc/nginx/sites-enabled/
-        rm -f /etc/nginx/sites-enabled/default
-        nginx -t
-        systemctl restart nginx
-        BOOT
+ln -sf /etc/nginx/sites-available/axialy-ui /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+nginx -t
+systemctl restart nginx
+BOOT
 
         ./scp_with_pass.exp ~/.ssh/deploy_key deploy.sh root@$DROPLET_IP:/tmp/deploy.sh "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
         ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
           "chmod +x /tmp/deploy.sh && bash /tmp/deploy.sh"
 
-        # ------------ upload application ------------
+        #
+        # upload application
+        #
         tar -czf /tmp/axialy-ui.tar.gz -C axialy-ui-product .
         ./scp_with_pass.exp ~/.ssh/deploy_key /tmp/axialy-ui.tar.gz root@$DROPLET_IP:/tmp/ "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
         ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
@@ -202,77 +195,66 @@ jobs:
            find /var/www/axialy-ui -type d -exec chmod 755 {} \; && \
            find /var/www/axialy-ui -type f -exec chmod 644 {} \;"
 
-        # ------------ .env ------------
+        #
+        # .env
+        #
         cat > env_file <<'ENV'
-        # Axialy UI DB
-        UI_DB_HOST=${{ secrets.DB_HOST }}
-        UI_DB_PORT=${{ secrets.DB_PORT }}
-        UI_DB_NAME=axialy_ui
-        UI_DB_USER=${{ secrets.DB_USER }}
-        UI_DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+# Axialy UI DB
+UI_DB_HOST=${{ secrets.DB_HOST }}
+UI_DB_PORT=${{ secrets.DB_PORT }}
+UI_DB_NAME=axialy_ui
+UI_DB_USER=${{ secrets.DB_USER }}
+UI_DB_PASSWORD=${{ secrets.DB_PASSWORD }}
 
-        # Shared services
-        API_BASE_URL=${{ secrets.API_BASE_URL }}
-        APP_BASE_URL=${{ secrets.APP_BASE_URL }}
-        INTERNAL_API_KEY=${{ secrets.INTERNAL_API_KEY }}
+# Shared services
+API_BASE_URL=${{ secrets.API_BASE_URL }}
+APP_BASE_URL=${{ secrets.APP_BASE_URL }}
+INTERNAL_API_KEY=${{ secrets.INTERNAL_API_KEY }}
 
-        # SMTP
-        SMTP_HOST=${{ secrets.SMTP_HOST }}
-        SMTP_PORT=${{ secrets.SMTP_PORT }}
-        SMTP_USER=${{ secrets.SMTP_USER }}
-        SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
-        SMTP_SECURE=tls
-
-        # Stripe
-        STRIPE_API_KEY=${{ secrets.STRIPE_API_KEY }}
-        STRIPE_PUBLISHABLE_KEY=${{ secrets.STRIPE_PUBLISHABLE_KEY }}
-        STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
-        ENV
+# SMTP
+SMTP_HOST=${{ secrets.SMTP_HOST }}
+SMTP_PORT=${{ secrets.SMTP_PORT }}
+SMTP_USER=${{ secrets.SMTP_USER }}
+SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+SMTP_SECURE=tls
+ENV
         ./scp_with_pass.exp ~/.ssh/deploy_key env_file root@$DROPLET_IP:/var/www/axialy-ui/.env "${{ secrets.DROPLET_SSH_PASSPHRASE }}"
         ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
           "chmod 640 /var/www/axialy-ui/.env && chown www-data:www-data /var/www/axialy-ui/.env"
 
-        # ------------ Composer (runs as www-data) ------------
+        #
+        # ------------ NEW: make Composer writable & run install
+        #
         ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
-          "cd /var/www/axialy-ui && \
+          "sudo -u www-data mkdir -p /var/www/.cache/composer && \
+           sudo -u www-data composer config --global cache-dir /var/www/.cache/composer && \
+           cd /var/www/axialy-ui && \
            sudo -u www-data composer install --no-dev --optimize-autoloader --no-interaction && \
            chown -R www-data:www-data /var/www/axialy-ui/vendor"
 
-        # reload services
+        # restart PHP & Nginx
         ./ssh_with_pass.exp ~/.ssh/deploy_key $DROPLET_IP "${{ secrets.DROPLET_SSH_PASSPHRASE }}" \
           "systemctl restart php8.1-fpm nginx"
 
         # local cleanup
         rm -f deploy.sh env_file /tmp/axialy-ui.tar.gz ssh_with_pass.exp scp_with_pass.exp
 
-    # ──────────────────────────────────────────────
-    # 5) Smoke-test
-    # ──────────────────────────────────────────────
+    # 5) smoke-test
     - name: Verify deployment
       run: |
-        echo "Testing deployment..."
+        echo "Testing deployment…"
         CODE=$(curl -s -o /dev/null -w '%{http_code}' http://${{ steps.tfout.outputs.droplet_ip }}/ || echo "000")
         if [ "$CODE" = "200" ] || [ "$CODE" = "302" ]; then
-          echo "Deployment successful. HTTP $CODE"
+          echo "✅ Deployment OK (HTTP $CODE)"
         else
-          echo "Unexpected HTTP response $CODE"
+          echo "❌ Unexpected HTTP $CODE"
           exit 1
         fi
 
-    # ──────────────────────────────────────────────
-    # 6) Friendly summary
-    # ──────────────────────────────────────────────
-    - name: Display deployment info
+    # 6) summary
+    - name: Display info
       run: |
         echo "========================================"
-        echo "Axialy UI deployed successfully!"
-        echo "========================================"
-        echo "Access your application at:"
-        echo "  http://${{ steps.tfout.outputs.droplet_ip }}/"
-        echo ""
-        echo "Droplet Details:"
-        echo "  Name   : ${{ github.event.inputs.droplet_name }}"
-        echo "  IP     : ${{ steps.tfout.outputs.droplet_ip }}"
-        echo "  Region : ${{ github.event.inputs.region }}"
-        echo "  Size   : ${{ github.event.inputs.size }}"
+        echo "Axialy UI deployed!"
+        echo "Access it at: http://${{ steps.tfout.outputs.droplet_ip }}/"
         echo "========================================"
