@@ -16,7 +16,9 @@ class AccountCreation
         $this->config = Config::getInstance();
     }
 
-    /*──────── helpers ────────*/
+    /*───────────────────────────*
+     *  1. Basic look-ups & token *
+     *───────────────────────────*/
     public function checkEmailExists(string $email): bool
     {
         $stmt = $this->pdo->prepare(
@@ -40,9 +42,14 @@ class AccountCreation
         return $token;
     }
 
-    /** Send verification e-mail via PHPMailer helper */
-    public function sendVerificationEmail(string $email, string $token, bool $debug = false): bool
-    {
+    /*───────────────────────────*
+     *  2. Outbound e-mails      *
+     *───────────────────────────*/
+    public function sendVerificationEmail(
+        string $email,
+        string $token,
+        bool   $debug = false          // one-off verbose SMTP logging
+    ): bool {
         $verificationLink =
             rtrim($this->config->get('app_base_url') ?: '', '/')
             . '/verify_email.php?token=' . urlencode($token);
@@ -53,64 +60,12 @@ class AccountCreation
             <h2>Welcome to AxiaBA</h2>
             <p>Please click the link below to verify your e-mail address:</p>
             <p><a href='$verificationLink'>Verify Email Address</a></p>
-            <p>If the above link is not clickable, copy &amp; paste this URL:</p>
+            <p>If the link is not clickable, copy &amp; paste this URL:</p>
             <p>$verificationLink</p>
             <p>This link expires in 24&nbsp;hours.</p>
             </body></html>";
 
         return sendMail($email, $subject, $html, strip_tags($html), $debug);
-    }
-
-    /** Look up token that hasn’t expired / been used */
-    public function verifyToken(string $token): ?string
-    {
-        $stmt = $this->pdo->prepare(
-            'SELECT email FROM email_verifications
-             WHERE token = ? AND expires_at > NOW() AND used = 0'
-        );
-        $stmt->execute([$token]);
-        return $stmt->fetchColumn() ?: null;
-    }
-
-    /** Finalise account, create default org, send welcome e-mail */
-    public function createAccount(string $email, string $username, string $password): bool
-    {
-        try {
-            $this->pdo->beginTransaction();
-
-            /* 1) org */
-            $stmt = $this->pdo->prepare(
-                'INSERT INTO default_organizations (default_organization_name)
-                 VALUES (?)'
-            );
-            $stmt->execute([$email]);
-            $orgId = (int) $this->pdo->lastInsertId();
-
-            /* 2) user */
-            $hashed = password_hash($password, PASSWORD_BCRYPT);
-            $stmt = $this->pdo->prepare(
-                'INSERT INTO ui_users
-                 (username, password, user_email, default_organization_id)
-                 VALUES (?, ?, ?, ?)'
-            );
-            $stmt->execute([$username, $hashed, $email, $orgId]);
-
-            /* 3) token → used */
-            $stmt = $this->pdo->prepare(
-                'UPDATE email_verifications SET used = 1
-                 WHERE email = ? AND used = 0'
-            );
-            $stmt->execute([$email]);
-
-            $this->pdo->commit();
-
-            $this->sendWelcomeEmail($email);
-            return true;
-        } catch (\Throwable $e) {
-            $this->pdo->rollBack();
-            error_log('Account creation error: ' . $e->getMessage());
-            return false;
-        }
     }
 
     private function sendWelcomeEmail(string $email, bool $debug = false): void
@@ -128,5 +83,64 @@ class AccountCreation
             </body></html>";
 
         sendMail($email, $subject, $html, strip_tags($html), $debug);
+    }
+
+    /*───────────────────────────*
+     *  3. Token validation      *
+     *───────────────────────────*/
+    public function verifyToken(string $token): ?string
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT email FROM email_verifications
+             WHERE token = ? AND expires_at > NOW() AND used = 0'
+        );
+        $stmt->execute([$token]);
+        return $stmt->fetchColumn() ?: null;
+    }
+
+    /*───────────────────────────*
+     *  4. Account creation flow *
+     *───────────────────────────*/
+    public function createAccount(
+        string $email,
+        string $username,
+        string $password
+    ): bool {
+        try {
+            $this->pdo->beginTransaction();
+
+            /* 1) default organisation */
+            $stmt = $this->pdo->prepare(
+                'INSERT INTO default_organizations (default_organization_name)
+                 VALUES (?)'
+            );
+            $stmt->execute([$email]);
+            $orgId = (int) $this->pdo->lastInsertId();
+
+            /* 2) user record */
+            $hashed = password_hash($password, PASSWORD_BCRYPT);
+            $stmt = $this->pdo->prepare(
+                'INSERT INTO ui_users
+                 (username, password, user_email, default_organization_id)
+                 VALUES (?, ?, ?, ?)'
+            );
+            $stmt->execute([$username, $hashed, $email, $orgId]);
+
+            /* 3) mark token used */
+            $stmt = $this->pdo->prepare(
+                'UPDATE email_verifications SET used = 1
+                 WHERE email = ? AND used = 0'
+            );
+            $stmt->execute([$email]);
+
+            $this->pdo->commit();
+
+            $this->sendWelcomeEmail($email);
+            return true;
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+            error_log('Account creation error: ' . $e->getMessage());
+            return false;
+        }
     }
 }
