@@ -1,18 +1,24 @@
 <?php
 /**
- * Lightweight, env-variable-driven configuration helper for Axialy-UI.
+ * Lightweight, env-variable-driven configuration helper for Axialy-UI
  *
- * Usage
+ * Mirrors the Admin-side helper so that older code can still do:
  *   $cfg = \AxiaBA\Config\Config::getInstance();
- *   echo $cfg->get('app_base_url');
+ *   $cfg->get('app_base_url');
+ *
+ * ────────── WHAT CHANGED? ──────────
+ *  • Added smtp_* keys so mailer.php can pull credentials.
+ *  • No original keys or behaviour were removed.
  */
 namespace AxiaBA\Config;
 
 final class Config implements \ArrayAccess
 {
-    /* ───────── singleton ───────── */
+    /** singleton */
     private static ?self $instance = null;
-    private array $cache = [];          // key ⇒ value
+
+    /** cached key ⇒ value */
+    private array $cache = [];
 
     private function __construct()
     {
@@ -34,7 +40,7 @@ final class Config implements \ArrayAccess
             'stripe_publishable_key'=> 'STRIPE_PUBLISHABLE_KEY',
             'stripe_webhook_secret' => 'STRIPE_WEBHOOK_SECRET',
 
-            // SMTP (added for Microsoft 365)
+            // SMTP (NEW)
             'smtp_host'             => 'SMTP_HOST',
             'smtp_port'             => 'SMTP_PORT',
             'smtp_user'             => 'SMTP_USER',
@@ -42,23 +48,24 @@ final class Config implements \ArrayAccess
             'smtp_from_address'     => 'SMTP_FROM_ADDRESS',
             'smtp_from_name'        => 'SMTP_FROM_NAME',
 
-            // miscellaneous
+            // misc
             'app_version'           => 'APP_VERSION',
         ];
 
-        /* load directly from environment */
+        /* prime cache from real environment */
         foreach ($map as $k => $env) {
             $this->cache[$k] = getenv($env) !== false ? getenv($env) : null;
         }
 
-        /* local-dev fallback: parse a nearby .env if nothing was found */
+        /* local-dev fallback: parse nearest .env if nothing set */
         if (!array_filter($this->cache)) {
             $candidates = [
-                dirname(__DIR__, 2) . '/.env',
-                dirname(__DIR__, 3) . '/.env',
+                dirname(__DIR__, 2).'/.env',
+                dirname(__DIR__, 3).'/.env',
             ];
             foreach ($candidates as $file) {
                 if (!is_readable($file)) continue;
+
                 foreach (file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
                     if ($line[0] === '#' || !str_contains($line, '=')) continue;
                     [$k, $v] = array_map('trim', explode('=', $line, 2));
@@ -66,13 +73,14 @@ final class Config implements \ArrayAccess
                         putenv("$k=$v");
                     }
                 }
-                /* reload keys we care about */
+
+                /* reload the env vars we care about */
                 foreach ($map as $k => $env) {
                     if ($this->cache[$k] === null && getenv($env) !== false) {
                         $this->cache[$k] = getenv($env);
                     }
                 }
-                break;      // stop after first readable .env
+                break; // stop after first readable .env
             }
         }
     }
@@ -88,12 +96,27 @@ final class Config implements \ArrayAccess
         return $this->cache[$key] ?? null;
     }
 
-    /* ── ArrayAccess for legacy `$config['db_host']` style ── */
-    public function offsetExists($offset): bool { return array_key_exists($offset, $this->cache); }
-    public function offsetGet($offset): mixed   { return $this->cache[$offset] ?? null; }
-    public function offsetSet($o,$v): void      { throw new \RuntimeException('Config is read-only'); }
-    public function offsetUnset($o): void       { throw new \RuntimeException('Config is read-only'); }
+    /* ArrayAccess so older `$config['db_host']` style still works */
+    public function offsetExists($offset): bool
+    {
+        return array_key_exists($offset, $this->cache);
+    }
+    public function offsetGet($offset): mixed
+    {
+        return $this->cache[$offset] ?? null;
+    }
+    public function offsetSet($offset, $value): void
+    {
+        throw new \RuntimeException('Config is read-only');
+    }
+    public function offsetUnset($offset): void
+    {
+        throw new \RuntimeException('Config is read-only');
+    }
 
     private function __clone() {}
-    public function __wakeup(): void            { throw new \RuntimeException('Cannot unserialise singleton'); }
+    public function __wakeup(): void
+    {
+        throw new \RuntimeException('Cannot unserialise singleton');
+    }
 }
