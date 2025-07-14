@@ -68,20 +68,23 @@ jobs:
       - name: Wait for instance SSH
         run: sleep 60
 
-      - name: Configure SSH and deploy
-        env:
-          HOST: ${{ steps.tfout.outputs.public_ip }}
+      - name: Configure SSH helpers
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -H "${{ steps.tfout.outputs.public_ip }}" >> ~/.ssh/known_hosts 2>/dev/null || true
           sudo apt-get update -qq
           sudo apt-get install -y expect
+
+      - name: Bootstrap instance and deploy code
+        env:
+          HOST: ${{ steps.tfout.outputs.public_ip }}
+        run: |
           cat > ssh_with_pass.exp <<'EOF'
 #!/usr/bin/expect -f
 set timeout 300
-set key [lindex $argv 0]
+set key  [lindex $argv 0]
 set host [lindex $argv 1]
 set pph  [lindex $argv 2]
 set cmd  [lindex $argv 3]
@@ -92,6 +95,7 @@ expect {
 }
 EOF
           chmod +x ssh_with_pass.exp
+
           cat > scp_with_pass.exp <<'EOF'
 #!/usr/bin/expect -f
 set timeout 300
@@ -106,6 +110,7 @@ expect {
 }
 EOF
           chmod +x scp_with_pass.exp
+
           cat > deploy.sh <<'DEPLOY'
 #!/bin/bash
 set -e
@@ -120,7 +125,7 @@ server {
   root /var/www/axialy-admin;
   index index.php index.html;
   server_name _;
-  location / { try_files \$uri \$uri/ /index.php?\$query_string; }
+  location / { try_files $uri $uri/ /index.php?$query_string; }
   location ~ \.php$ {
     include snippets/fastcgi-php.conf;
     fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
@@ -136,11 +141,14 @@ rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl restart nginx
 DEPLOY
+
           ./scp_with_pass.exp ~/.ssh/deploy_key deploy.sh ubuntu@$HOST:/tmp/deploy.sh "${{ secrets.EC2_SSH_PASSPHRASE }}"
           ./ssh_with_pass.exp ~/.ssh/deploy_key $HOST "${{ secrets.EC2_SSH_PASSPHRASE }}" "chmod +x /tmp/deploy.sh && sudo bash /tmp/deploy.sh"
+
           cd axialy-admin-product && tar -czf /tmp/axialy-admin.tar.gz . && cd ..
           ./scp_with_pass.exp ~/.ssh/deploy_key /tmp/axialy-admin.tar.gz ubuntu@$HOST:/tmp/ "${{ secrets.EC2_SSH_PASSPHRASE }}"
           ./ssh_with_pass.exp ~/.ssh/deploy_key $HOST "${{ secrets.EC2_SSH_PASSPHRASE }}" "sudo mkdir -p /var/www/axialy-admin && sudo tar -xzf /tmp/axialy-admin.tar.gz -C /var/www/axialy-admin && sudo chown -R www-data:www-data /var/www/axialy-admin && sudo find /var/www/axialy-admin -type d -exec chmod 755 {} \; && sudo find /var/www/axialy-admin -type f -exec chmod 644 {} \; && sudo mv /var/www/axialy-admin/admin_login.http.php /var/www/axialy-admin/admin_login.php && sudo systemctl restart php8.1-fpm nginx"
+
           rm -f deploy.sh /tmp/axialy-admin.tar.gz ssh_with_pass.exp scp_with_pass.exp
 
       - name: Verify deployment
@@ -152,7 +160,6 @@ DEPLOY
         run: |
           echo "========================================"
           echo "Axialy Admin deployed successfully!"
-          echo "----------------------------------------"
           echo "URL   : http://${{ steps.tfout.outputs.public_ip }}/admin_login.php"
           echo "Name  : ${{ github.event.inputs.droplet_name }}"
           echo "IP    : ${{ steps.tfout.outputs.public_ip }}"
