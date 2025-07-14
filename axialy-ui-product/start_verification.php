@@ -2,9 +2,9 @@
 /**
  * /app.axialy.ai/start_verification.php
  *
- * Starts the e-mail–verification flow for creating a new AxiaBA account.
- * Expects: POST { email=<address> }
- * Returns: JSON { status: "success" | "error", message: "<text>" }
+ * Starts the e-mail-verification flow for creating a new AxiaBA account.
+ * Expects : POST { email=<address>[, debug=1] }
+ * Returns : JSON { status: "success" | "error", message: "<text>" }
  */
 
 declare(strict_types=1);
@@ -29,7 +29,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 /*-------------------------------------------------
  | 2. Basic validation of the e-mail field
  *------------------------------------------------*/
-$email = trim($_POST['email'] ?? '');
+$email  = trim($_POST['email'] ?? '');
+$debug  = isset($_POST['debug']) && $_POST['debug'] === '1';   // one-off verbose SMTP
 $accountCreation = new AccountCreation($pdo);
 
 try {
@@ -46,9 +47,9 @@ try {
      *-------------------------------------------*/
     $token = $accountCreation->createVerificationToken($email);
 
-    if (!$accountCreation->sendVerificationEmail($email, $token)) {
-        /* 3a.  If sending failed, delete the token so the
-         *       user can retry immediately, then raise error.
+    if (!$accountCreation->sendVerificationEmail($email, $token, $debug)) {
+        /* 3a. If sending failed, delete the token so the
+         *      user can retry immediately, then raise error.
          */
         $stmt = $pdo->prepare('DELETE FROM email_verifications WHERE token = ?');
         $stmt->execute([$token]);
