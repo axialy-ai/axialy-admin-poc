@@ -1,3 +1,4 @@
+# .github/workflows/axialy_admin.yml
 name: Axialy Admin UI
 
 on:
@@ -62,7 +63,12 @@ jobs:
           -var="admin_default_user=${{ secrets.ADMIN_DEFAULT_USER }}" \
           -var="admin_default_email=${{ secrets.ADMIN_DEFAULT_EMAIL }}" \
           -var="admin_default_password=${{ secrets.ADMIN_DEFAULT_PASSWORD }}" \
-          -var="component_tag=admin"
+          -var="component_tag=admin" \
+          # NEW – SMTP smart-host details (required by cloud-init)
+          -var="smtp_host=${{ secrets.SMTP_HOST }}" \
+          -var="smtp_port=${{ secrets.SMTP_PORT }}" \
+          -var="smtp_user=${{ secrets.SMTP_USER }}" \
+          -var="smtp_password=${{ secrets.SMTP_PASSWORD }}"
 
         echo "droplet_ip=$(terraform output -raw droplet_ip)"  >> "$GITHUB_OUTPUT"
         echo "droplet_id=$(terraform output -raw droplet_id)"  >> "$GITHUB_OUTPUT"
