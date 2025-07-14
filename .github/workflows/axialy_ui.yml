@@ -1,3 +1,4 @@
+# .github/workflows/axialy_ui.yml
 name: Axialy UI
 
 on:
@@ -184,6 +185,9 @@ jobs:
              find /var/www/axialy-ui -type d -exec chmod 755 {} \; && \
              find /var/www/axialy-ui -type f -exec chmod 644 {} \;"
 
+          # --------------------------------------------------------
+          #  UPDATED .env  → now includes SMTP relay configuration
+          # --------------------------------------------------------
           cat > env_file <<'ENV_EOF'
           # Axialy UI DB
           UI_DB_HOST=${{ secrets.DB_HOST }}
@@ -196,6 +200,12 @@ jobs:
           API_BASE_URL=${{ secrets.API_BASE_URL }}
           APP_BASE_URL=${{ secrets.APP_BASE_URL }}
           INTERNAL_API_KEY=${{ secrets.INTERNAL_API_KEY }}
+
+          # SMTP smart-host (needed for verification e-mails)
+          SMTP_HOST=${{ secrets.SMTP_HOST }}
+          SMTP_PORT=${{ secrets.SMTP_PORT }}
+          SMTP_USER=${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
 
           # Stripe
           STRIPE_API_KEY=${{ secrets.STRIPE_API_KEY }}
