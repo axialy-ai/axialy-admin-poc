@@ -4,8 +4,70 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "18fcb712fdd583eea49265ff7e90c42f",
+    "content-hash": "0feaa9e5e73cfa5d14fc5e9ec73cdc0e",
     "packages": [
+        {
+            "name": "phpmailer/phpmailer",
+            "version": "v6.9.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/PHPMailer/PHPMailer.git",
+                "reference": "62bbd8c80c34c743bb3c3af1cf31b784f3ce1872"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/PHPMailer/PHPMailer/zipball/62bbd8c80c34c743bb3c3af1cf31b784f3ce1872",
+                "reference": "62bbd8c80c34c743bb3c3af1cf31b784f3ce1872",
+                "shasum": ""
+            },
+            "require": {
+                "ext-ctype": "*",
+                "ext-filter": "*",
+                "ext-hash": "*",
+                "ext-iconv": "*",
+                "ext-json": "*",
+                "php": ">=5.5.0"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "PHPMailer\\PHPMailer\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "LGPL-2.1-or-later"
+            ],
+            "authors": [
+                {
+                    "name": "Jim Jagielski"
+                },
+                {
+                    "name": "Andy Prevost"
+                },
+                {
+                    "name": "Marcus Bointon"
+                },
+                {
+                    "name": "Bruno Burguete"
+                },
+                {
+                    "name": "Marcus Bointon"
+                }
+            ],
+            "description": "PHPMailer is a full-featured e-mail creation & transfer class for PHP",
+            "keywords": [
+                "email",
+                "mail",
+                "phpmailer",
+                "smtp"
+            ],
+            "support": {
+                "issues": "https://github.com/PHPMailer/PHPMailer/issues",
+                "source": "https://github.com/PHPMailer/PHPMailer/tree/v6.9.1"
+            },
+            "time": "2024-05-31T14:52:17+00:00"
+        },
         {
             "name": "stripe/stripe-php",
             "version": "v10.21.0",
