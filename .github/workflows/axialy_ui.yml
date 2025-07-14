@@ -1,5 +1,5 @@
 # .github/workflows/axialy_ui.yml
-name: Axialy UI                    # ←--- stays right here, unchanged
+name: Axialy UI
 
 on:
   workflow_dispatch:
