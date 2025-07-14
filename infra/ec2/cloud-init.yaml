@@ -1,0 +1,53 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - nginx
+  - php8.1-fpm
+  - php8.1-mysql
+  - php8.1-mbstring
+  - php8.1-xml
+  - php8.1-curl
+  - php8.1-zip
+  - php8.1-gd
+  - php8.1-intl
+  - composer
+  - git
+  - ufw
+  - postfix
+  - mailutils
+  - libsasl2-modules
+
+write_files:
+  - path: /etc/environment
+    content: |
+      DB_HOST="${db_host}"
+      DB_PORT="${db_port}"
+      DB_USER="${db_user}"
+      DB_PASSWORD="${db_password}"
+      DB_NAME="axialy_admin"
+
+      UI_DB_HOST="${db_host}"
+      UI_DB_PORT="${db_port}"
+      UI_DB_USER="${db_user}"
+      UI_DB_PASSWORD="${db_password}"
+      UI_DB_NAME="axialy_ui"
+
+      ADMIN_DEFAULT_USER="${admin_default_user}"
+      ADMIN_DEFAULT_EMAIL="${admin_default_email}"
+      ADMIN_DEFAULT_PASSWORD="${admin_default_password}"
+    append: true
+
+  - path: /etc/postfix/sasl_passwd
+    content: |
+      [${smtp_host}]:${smtp_port} ${smtp_user}:${smtp_password}
+    owner: root:root
+    permissions: '0600'
+
+runcmd:
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+  - sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
+  - systemctl restart php8.1-fpm
