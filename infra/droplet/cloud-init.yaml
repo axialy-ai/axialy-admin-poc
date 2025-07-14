@@ -43,22 +43,37 @@ write_files:
     permissions: '0600'
 
 runcmd:
+  # ---------------- basic hardening ----------------
   - ufw allow 22/tcp
   - ufw allow 80/tcp
   - ufw allow 443/tcp
   - ufw --force enable
+
+  # ---------------- PHP tweaks ---------------------
   - sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/' /etc/php/8.1/fpm/php.ini
   - systemctl restart php8.1-fpm
+
+  # ---------------- application root ---------------
   - mkdir -p /var/www/axialy-admin
   - chown -R www-data:www-data /var/www/axialy-admin
   - find /var/www/axialy-admin -type d -exec chmod 755 {} \;
+
+  # ---------------- Postfix smart-host -------------
   - |
       postmap /etc/postfix/sasl_passwd
+
+      # relay via Microsoft 365 / GoDaddy – STARTTLS on 587
       postconf -e "relayhost = [${smtp_host}]:${smtp_port}"
       postconf -e "smtp_sasl_auth_enable = yes"
       postconf -e "smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd"
       postconf -e "smtp_sasl_security_options = noanonymous"
       postconf -e "smtp_use_tls = yes"
-      postconf -e "smtp_tls_wrappermode = yes"
+      postconf -e "smtp_tls_security_level = encrypt"
+      postconf -e "smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt"
+      postconf -e "smtp_tls_loglevel = 1"
       postconf -e "myhostname = $(hostname).axiaba.internal"
+
+      # ensure wrapper-mode is OFF (only needed for port 465)
+      postconf -X smtp_tls_wrappermode || true
+
       systemctl restart postfix
