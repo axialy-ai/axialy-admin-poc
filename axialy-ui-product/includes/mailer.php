@@ -7,35 +7,29 @@
  *       string  $subject,
  *       string  $htmlBody,
  *       string  $altBody = '',
- *       bool    $debug   = false      // verbose SMTP output to error_log
+ *       bool    $debug   = false
  *   ): bool
  *
- * 1. Loads Composer’s autoloader if available.
- * 2. Prefers PHPMailer for authenticated TLS SMTP.
- * 3. If PHPMailer is missing *or* the SMTP send fails, falls back to PHP’s
- *    built-in mail() so the application never fatals.
+ * 2025-07-14 – Improvements
+ *   • Supports explicit SMTP_SECURE (ssl | tls | none).
+ *   • Logs PHPMailer::ErrorInfo when send() returns false.
  */
 
 declare(strict_types=1);
-
 use AxiaBA\Config\Config;
 
-/*-------------------------------------------------
- | 0. Autoload (if vendor/ exists)
- *------------------------------------------------*/
+/* 0) Autoload composer dependencies if present */
 $autoload = dirname(__DIR__) . '/vendor/autoload.php';
 if (is_readable($autoload)) {
     /** @noinspection PhpIncludeInspection */
     require_once $autoload;
 }
 
-/*-------------------------------------------------
- | 1. Function definition
- *------------------------------------------------*/
+/* 1) Define helper only once */
 if (!function_exists('sendMail')) {
 
     /**
-     * @return bool true if *any* transport succeeded
+     * Sends a single e-mail message. Returns true on first successful transport.
      */
     function sendMail(
         string $to,
@@ -45,41 +39,53 @@ if (!function_exists('sendMail')) {
         bool   $debug   = false
     ): bool {
 
-        $cfg       = Config::getInstance();
-        $fromAddr  = $cfg->get('smtp_from_address') ?: 'support@axiaba.com';
-        $fromName  = $cfg->get('smtp_from_name')   ?: 'AxiaBA';
+        $cfg      = Config::getInstance();
+        $fromAddr = $cfg->get('smtp_from_address') ?: 'support@axiaba.com';
+        $fromName = $cfg->get('smtp_from_name')   ?: 'AxiaBA';
 
-        /*───────────────────────────────────────────────
-         | A. Try PHPMailer if the class is available
-         *───────────────────────────────────────────────*/
+        /* A) Preferred transport: PHPMailer via authenticated SMTP */
         if (class_exists('\PHPMailer\PHPMailer\PHPMailer')) {
             try {
                 $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
 
-                // debugging
-                $mail->SMTPDebug  = $debug ? 2 : 0;
-                $mail->Debugoutput = function ($str, $level) {
+                // optional verbose output
+                $mail->SMTPDebug   = $debug ? 2 : 0;
+                $mail->Debugoutput = static function ($str, $level) {
                     error_log("[SMTP-debug:$level] $str");
                 };
 
                 $mail->isSMTP();
-                $mail->Host       = $cfg->get('smtp_host') ?: 'localhost';
-                $mail->Port       = (int)($cfg->get('smtp_port') ?: 25);
+                $mail->Host = $cfg->get('smtp_host') ?: 'localhost';
+                $mail->Port = (int)($cfg->get('smtp_port') ?: 25);
 
-                /* encryption heuristics */
-                if (in_array($mail->Port, [465, 587, 2525], true)) {
-                    $mail->SMTPSecure = ($mail->Port === 465)
-                        ? \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS
-                        : \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+                /* encryption:
+                 *  – honour SMTP_SECURE if provided,
+                 *  – otherwise fall back to port heuristic.
+                 */
+                $securePref = strtolower($cfg->get('smtp_secure') ?? '');
+                if ($securePref !== '') {
+                    $mail->SMTPSecure = match ($securePref) {
+                        'ssl', 'smtps'   => \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS,
+                        'tls', 'starttls'=> \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS,
+                        'none'           => false,
+                        default          => $mail->SMTPSecure,
+                    };
+                } else {
+                    // heuristic: 465 → SMTPS, 587/2525 → STARTTLS
+                    if ($mail->Port === 465) {
+                        $mail->SMTPSecure = \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS;
+                    } elseif (in_array($mail->Port, [587, 2525], true)) {
+                        $mail->SMTPSecure = \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+                    }
                 }
 
-                $mail->SMTPAuth   = (bool)$cfg->get('smtp_user');
+                $mail->SMTPAuth = (bool)$cfg->get('smtp_user');
                 if ($mail->SMTPAuth) {
                     $mail->Username = $cfg->get('smtp_user');
                     $mail->Password = $cfg->get('smtp_password');
                 }
 
-                $mail->CharSet    = 'UTF-8';
+                $mail->CharSet  = 'UTF-8';
                 $mail->setFrom($fromAddr, $fromName);
                 $mail->addAddress($to);
 
@@ -89,23 +95,23 @@ if (!function_exists('sendMail')) {
                 $mail->AltBody = $altBody ?: strip_tags($htmlBody);
 
                 if ($mail->send()) {
-                    return true;                // ✅ success via PHPMailer
+                    return true; // ✅ sent via PHPMailer
                 }
-                // If we get here send() returned false (rare) – fall through
-                error_log('[AxiaBA] PHPMailer send() returned false, attempting mail() fallback');
+
+                // send() returned FALSE – record the reason
+                error_log('[AxiaBA] PHPMailer send() failed: ' . $mail->ErrorInfo
+                          . ' – falling back to mail()');
             } catch (\Throwable $e) {
-                error_log('[AxiaBA] PHPMailer error: ' . $e->getMessage()
-                          . ' – attempting mail() fallback');
+                error_log('[AxiaBA] PHPMailer exception: ' . $e->getMessage()
+                          . ' – falling back to mail()');
             }
         }
 
-        /*───────────────────────────────────────────────
-         | B. Fallback to PHP’s mail()
-         *───────────────────────────────────────────────*/
+        /* B) Fallback transport: PHP’s mail() */
         $headers = [
             'MIME-Version: 1.0',
             'Content-type: text/html; charset=UTF-8',
-            "From: $fromName <$fromAddr>"
+            "From: $fromName <$fromAddr>",
         ];
         $ok = mail($to, $subject, $htmlBody, implode("\r\n", $headers));
 
@@ -114,6 +120,7 @@ if (!function_exists('sendMail')) {
         } elseif ($debug) {
             error_log('[AxiaBA] mail() fallback succeeded for ' . $to);
         }
+
         return $ok;
     }
 }
