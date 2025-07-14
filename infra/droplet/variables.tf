@@ -87,9 +87,9 @@ variable "smtp_host" {
 }
 
 variable "smtp_port" {
-  description = "SMTP port (465 TLS or 587 STARTTLS)"
+  description = "SMTP port (587 with STARTTLS is recommended for Microsoft 365 / GoDaddy)"
   type        = string
-  default     = "465"
+  default     = "587"
 }
 
 variable "smtp_user" {
