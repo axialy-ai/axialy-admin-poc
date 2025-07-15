@@ -1,4 +1,4 @@
-name: Axialy Admin on AWS
+name: Axialy Admin AWS
 
 on:
   workflow_dispatch:
