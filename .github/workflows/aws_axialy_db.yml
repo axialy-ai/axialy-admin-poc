@@ -1,11 +1,28 @@
-name: Axialy DB on AWS
+name: Axialy DB
 
 on:
   workflow_dispatch:
+    inputs:
+      db_identifier:
+        description: "RDS identifier prefix (used for both admin & UI instances)"
+        required: true
+        default: axialy-db
+      region:
+        description: "AWS region"
+        required: true
+        default: us-west-2
+      db_instance_class:
+        description: "RDS instance class"
+        required: true
+        default: db.t3.micro
+      db_allocated_storage:
+        description: "Allocated storage in GB"
+        required: true
+        default: "20"
 
 env:
-  AWS_ACCESS_KEY_ID:       ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY:   ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
 jobs:
   apply:
@@ -14,27 +31,34 @@ jobs:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: infra/rds
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
           terraform_wrapper: false
+
       - run: terraform -chdir=infra/rds init -input=false
+
       - id: apply
         run: |
           terraform -chdir=infra/rds apply -auto-approve -input=false \
-            -var="db_identifier=axialy-db" \
-            -var="region=us-west-2"
-          echo "DB_HOST=$(terraform -chdir=infra/rds output -raw db_host)" >> $GITHUB_ENV
-          echo "UI_DB_HOST=$(terraform -chdir=infra/rds output -raw ui_db_host)" >> $GITHUB_ENV
-          echo "DB_PORT=$(terraform -chdir=infra/rds output -raw db_port)" >> $GITHUB_ENV
-          echo "DB_USER=$(terraform -chdir=infra/rds output -raw db_user)" >> $GITHUB_ENV
-          echo "DB_PASSWORD=$(terraform -chdir=infra/rds output -raw db_pass)" >> $GITHUB_ENV
+            -var="db_identifier=${{ inputs.db_identifier }}" \
+            -var="region=${{ inputs.region }}" \
+            -var="db_instance_class=${{ inputs.db_instance_class }}" \
+            -var="db_allocated_storage=${{ inputs.db_allocated_storage }}"
+
+          echo "DB_HOST=$(terraform -chdir=infra/rds output -raw db_host)"      >> "$GITHUB_ENV"
+          echo "UI_DB_HOST=$(terraform -chdir=infra/rds output -raw ui_db_host)" >> "$GITHUB_ENV"
+          echo "DB_PORT=$(terraform -chdir=infra/rds output -raw db_port)"       >> "$GITHUB_ENV"
+          echo "DB_USER=$(terraform -chdir=infra/rds output -raw db_user)"       >> "$GITHUB_ENV"
+          echo "DB_PASSWORD=$(terraform -chdir=infra/rds output -raw db_pass)"   >> "$GITHUB_ENV"
+
       - if: ${{ secrets.GH_PAT != '' }}
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          gh secret set DB_HOST     --body "$DB_HOST"
-          gh secret set UI_DB_HOST  --body "$UI_DB_HOST"
-          gh secret set DB_PORT     --body "$DB_PORT"
-          gh secret set DB_USER     --body "$DB_USER"
-          gh secret set DB_PASSWORD --body "$DB_PASSWORD"
+          gh secret set DB_HOST      --body "$DB_HOST"
+          gh secret set UI_DB_HOST   --body "$UI_DB_HOST"
+          gh secret set DB_PORT      --body "$DB_PORT"
+          gh secret set DB_USER      --body "$DB_USER"
+          gh secret set DB_PASSWORD  --body "$DB_PASSWORD"
