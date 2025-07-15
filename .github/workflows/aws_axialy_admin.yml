@@ -110,21 +110,6 @@ jobs:
     - name: Create .env file
       run: |
         cat > axialy-admin.env <<EOF
-DB_HOST=${DB_HOST}
-DB_PORT=${DB_PORT}
-DB_NAME=axialy_admin
-DB_USER=${DB_USER}
-DB_PASSWORD=${DB_PASSWORD}
-
-ADMIN_DEFAULT_USER=${ADMIN_DEFAULT_USER}
-ADMIN_DEFAULT_EMAIL=${ADMIN_DEFAULT_EMAIL}
-ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD}
-
-SMTP_HOST=${SMTP_HOST}
-SMTP_PORT=${SMTP_PORT}
-SMTP_USER=${SMTP_USER}
-SMTP_PASSWORD=${SMTP_PASSWORD}
-EOF
 
     - name: Upload files
       run: |
@@ -179,7 +164,13 @@ server {
   add_header X-Content-Type-Options "nosniff" always;
   add_header X-XSS-Protection "1; mode=block" always;
 }
+NGINX
+          sudo ln -sf /etc/nginx/sites-available/axialy-admin /etc/nginx/sites-enabled/
 
+          # --- restart services ---
+          sudo systemctl restart php8.1-fpm
+          sudo systemctl restart nginx
+REMOTE
 
     # ──────────────────────────────────────────────────────────
     # 7) Friendly summary
