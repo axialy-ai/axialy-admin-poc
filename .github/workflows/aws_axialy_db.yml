@@ -1,4 +1,4 @@
-name: Axialy DB AWS
+name: Axialy DB AWS               # clearer workflow name
 
 on:
   workflow_dispatch:
@@ -23,20 +23,20 @@ on:
 jobs:
   apply:
     runs-on: ubuntu-24.04
+    # Terraform/CLI need the AWS keys available as standard env-vars.
+    env:
+      AWS_ACCESS_KEY_ID:       ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY:   ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION:      ${{ inputs.region }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout infra
+        uses: actions/checkout@v4
         with:
           sparse-checkout: infra/rds
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ inputs.region }}
-
-      - uses: hashicorp/setup-terraform@v3
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
           terraform_wrapper: false
@@ -45,7 +45,7 @@ jobs:
         run: terraform -chdir=infra/rds init -input=false
 
       - name: Terraform apply
-        id: apply
+        id: tf
         run: |
           terraform -chdir=infra/rds apply -auto-approve -input=false \
             -var="db_identifier=${{ inputs.db_identifier }}" \
@@ -53,19 +53,19 @@ jobs:
             -var="db_instance_class=${{ inputs.db_instance_class }}" \
             -var="db_allocated_storage=${{ inputs.db_allocated_storage }}"
 
-          echo "DB_HOST=$(terraform -chdir=infra/rds output -raw db_host)"      >> "$GITHUB_ENV"
-          echo "UI_DB_HOST=$(terraform -chdir=infra/rds output -raw ui_db_host)" >> "$GITHUB_ENV"
-          echo "DB_PORT=$(terraform -chdir=infra/rds output -raw db_port)"       >> "$GITHUB_ENV"
-          echo "DB_USER=$(terraform -chdir=infra/rds output -raw db_user)"       >> "$GITHUB_ENV"
-          echo "DB_PASSWORD=$(terraform -chdir=infra/rds output -raw db_pass)"   >> "$GITHUB_ENV"
+          echo "DB_HOST=$(terraform  -chdir=infra/rds output -raw db_host)"      >> $GITHUB_ENV
+          echo "UI_DB_HOST=$(terraform -chdir=infra/rds output -raw ui_db_host)" >> $GITHUB_ENV
+          echo "DB_PORT=$(terraform   -chdir=infra/rds output -raw db_port)"     >> $GITHUB_ENV
+          echo "DB_USER=$(terraform   -chdir=infra/rds output -raw db_user)"     >> $GITHUB_ENV
+          echo "DB_PASSWORD=$(terraform -chdir=infra/rds output -raw db_pass)"   >> $GITHUB_ENV
 
-      - name: Persist DB connection details to repository secrets
+      - name: Persist DB connection details to repo secrets (optional)
         if: ${{ secrets.GH_PAT != '' }}
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          gh secret set DB_HOST      --body "$DB_HOST"
-          gh secret set UI_DB_HOST   --body "$UI_DB_HOST"
-          gh secret set DB_PORT      --body "$DB_PORT"
-          gh secret set DB_USER      --body "$DB_USER"
-          gh secret set DB_PASSWORD  --body "$DB_PASSWORD"
+          gh secret set DB_HOST     --body "$DB_HOST"
+          gh secret set UI_DB_HOST  --body "$UI_DB_HOST"
+          gh secret set DB_PORT     --body "$DB_PORT"
+          gh secret set DB_USER     --body "$DB_USER"
+          gh secret set DB_PASSWORD --body "$DB_PASSWORD"
