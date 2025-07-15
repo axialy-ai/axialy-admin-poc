@@ -5,8 +5,11 @@ data "aws_vpc" "default" {
   default = true
 }
 
-data "aws_subnet_ids" "default" {
-  vpc_id = data.aws_vpc.default.id
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
 }
 
 data "aws_ami" "ubuntu" {
@@ -65,7 +68,7 @@ resource "aws_security_group" "admin" {
 resource "aws_instance" "admin" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
-  subnet_id              = element(data.aws_subnet_ids.default.ids, 0)
+  subnet_id              = data.aws_subnets.default.ids[0]
   vpc_security_group_ids = [aws_security_group.admin.id]
   key_name               = var.key_name
 
@@ -77,6 +80,7 @@ resource "aws_instance" "admin" {
 }
 
 resource "aws_eip" "admin" {
-  instance = aws_instance.admin.id
-  vpc      = true
+  allocation_id = var.elastic_ip_allocation_id
+  instance      = aws_instance.admin.id
+  vpc           = true
 }
