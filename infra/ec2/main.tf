@@ -1,38 +1,23 @@
-############################
-# Networking prerequisites #
-############################
+#################################
+#   VPC + SUBNET auto-detection #
+#################################
 
-locals {
-  use_default_vpc = length(trimspace(var.vpc_id)) == 0
-}
-
-# Either grab the default VPC or the one supplied as a variable
-data "aws_vpc" "selected" {
-  count = local.use_default_vpc ? 1 : 0
+data "aws_vpc" "default" {
   default = true
 }
 
-data "aws_vpc" "override" {
-  count = local.use_default_vpc ? 0 : 1
-  id    = var.vpc_id
+data "aws_subnet_ids" "default" {
+  vpc_id = data.aws_vpc.default.id
 }
 
-locals {
-  vpc_id = local.use_default_vpc ? data.aws_vpc.selected[0].id : data.aws_vpc.override[0].id
-}
-
-data "aws_subnet_ids" "selected" {
-  vpc_id = local.vpc_id
-}
-
-########################
-# Security group rules #
-########################
+######################
+#   Security group   #
+######################
 
 resource "aws_security_group" "admin" {
   name        = "${var.instance_name}-sg"
-  description = "Allow SSH & HTTP/S for Axialy Admin"
-  vpc_id      = local.vpc_id
+  description = "Allow SSH/HTTP/HTTPS"
+  vpc_id      = data.aws_vpc.default.id
 
   ingress {
     description = "SSH"
@@ -65,62 +50,48 @@ resource "aws_security_group" "admin" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Name = "${var.instance_name}-sg"
-  }
+  tags = { Name = "${var.instance_name}-sg" }
 }
 
-##################
-# EC2 – instance #
-##################
-
-resource "aws_instance" "admin" {
-  ami                         = data.aws_ami.ubuntu.id
-  instance_type               = var.instance_type
-  subnet_id                   = element(data.aws_subnet_ids.selected.ids, 0)
-  vpc_security_group_ids      = [aws_security_group.admin.id]
-  key_name                    = var.key_name
-  associate_public_ip_address = true
-
-  tags = {
-    Name = var.instance_name
-  }
-}
+######################
+#     EC2 instance   #
+######################
 
 data "aws_ami" "ubuntu" {
   most_recent = true
+  owners      = ["099720109477"] # Canonical
 
   filter {
     name   = "name"
     values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-24.04-amd64-server-*"]
   }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-
-  owners = ["099720109477"] # Canonical
 }
 
-#######################
-# Elastic-IP binding  #
-#######################
+resource "aws_instance" "admin" {
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = var.instance_type
+  subnet_id              = data.aws_subnet_ids.default.ids[0]
+  vpc_security_group_ids = [aws_security_group.admin.id]
+  key_name               = var.key_name
+  associate_public_ip_address = true
+
+  tags = { Name = var.instance_name }
+}
+
+#########################
+#  Elastic-IP binding   #
+#########################
 
 resource "aws_eip_association" "this" {
   allocation_id = var.elastic_ip_allocation_id
   instance_id   = aws_instance.admin.id
 }
 
-################
-#    OUTPUTS   #
-################
+#############
+# Outputs   #
+#############
 
 output "instance_public_ip" {
-  description = "Public IPv4 address of the EC2 instance"
   value       = aws_instance.admin.public_ip
-}
-
-output "instance_id" {
-  value = aws_instance.admin.id
+  description = "Public IPv4 address"
 }
