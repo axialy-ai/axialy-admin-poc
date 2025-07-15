@@ -91,19 +91,19 @@ jobs:
             sudo mkdir -p /var/www/axialy-admin
             sudo tar -xzf /home/ubuntu/axialy-admin.tar.gz -C /var/www/axialy-admin
             sudo tee /var/www/axialy-admin/.env >/dev/null <<EOF
-DB_HOST=${DB_HOST}
-DB_PORT=${DB_PORT}
-DB_NAME=axialy_admin
-DB_USER=${DB_USER}
-DB_PASSWORD=${DB_PASSWORD}
-ADMIN_DEFAULT_USER=${ADMIN_DEFAULT_USER}
-ADMIN_DEFAULT_EMAIL=${ADMIN_DEFAULT_EMAIL}
-ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD}
-SMTP_HOST=${SMTP_HOST}
-SMTP_PORT=${SMTP_PORT}
-SMTP_USER=${SMTP_USER}
-SMTP_PASSWORD=${SMTP_PASSWORD}
-EOF
+            DB_HOST=${DB_HOST}
+            DB_PORT=${DB_PORT}
+            DB_NAME=axialy_admin
+            DB_USER=${DB_USER}
+            DB_PASSWORD=${DB_PASSWORD}
+            ADMIN_DEFAULT_USER=${ADMIN_DEFAULT_USER}
+            ADMIN_DEFAULT_EMAIL=${ADMIN_DEFAULT_EMAIL}
+            ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD}
+            SMTP_HOST=${SMTP_HOST}
+            SMTP_PORT=${SMTP_PORT}
+            SMTP_USER=${SMTP_USER}
+            SMTP_PASSWORD=${SMTP_PASSWORD}
+            EOF
             sudo chmod 640 /var/www/axialy-admin/.env
             sudo chown -R www-data:www-data /var/www/axialy-admin
             sudo tee /etc/nginx/sites-available/axialy-admin >/dev/null <<'NGINX'
