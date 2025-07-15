@@ -1,5 +1,5 @@
 # .github/workflows/axialy_admin.yml
-name: Axialy Admin UI
+name: DEPRECATED Axialy Admin UI
 
 on:
   workflow_dispatch:
