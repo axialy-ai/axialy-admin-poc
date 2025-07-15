@@ -5,7 +5,7 @@ variable "region" {
 }
 
 variable "db_identifier" {
-  description = "Identifier prefix shared by Admin & UI DB instances"
+  description = "Identifier prefix shared by the two DBs"
   type        = string
 }
 
@@ -16,7 +16,7 @@ variable "db_instance_class" {
 }
 
 variable "db_allocated_storage" {
-  description = "Allocated storage in GiB"
+  description = "Allocated storage (GiB)"
   type        = number
   default     = 20
 }
