@@ -1,30 +1,34 @@
-name: Axialy DB  (AWS RDS)
+name: Axialy DB
 
 on:
   workflow_dispatch:
     inputs:
-      db_instance_id:
-        description: "RDS instance identifier"
+      db_cluster_name:
+        description: "DigitalOcean DB-cluster name"
         required: true
-        default: axialy-db-prod
-      db_instance_class:
-        description: "RDS instance class"
-        default: db.t3.small
-      allocated_storage:
-        description: "GB of storage"
-        default: 20
+      region:
+        description: "DO region (e.g. nyc3, sfo3, fra1)"
+        default: sfo3
+      size:
+        description: "Cluster size slug"
+        default: db-s-1vcpu-1gb
 
 jobs:
   apply:
     runs-on: ubuntu-latest
     env:
-      AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION:    ${{ secrets.AWS_DEFAULT_REGION }}
+      TF_VAR_do_token: ${{ secrets.DO_PAT }}
 
     steps:
-    - uses: actions/checkout@v4
+    # ─────────────────────────────────────────────────────────
+    # 1) Code checkout -- we need the *.sql dumps
+    # ─────────────────────────────────────────────────────────
+    - name: Checkout code
+      uses: actions/checkout@v4
 
+    # ─────────────────────────────────────────────────────────
+    # 2) Terraform - create cluster + dbs + service user
+    # ─────────────────────────────────────────────────────────
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
@@ -40,16 +44,20 @@ jobs:
       working-directory: infra/database
       run: |
         terraform apply -auto-approve -input=false \
-          -var="db_instance_id=${{ github.event.inputs.db_instance_id }}" \
-          -var="db_instance_class=${{ github.event.inputs.db_instance_class }}" \
-          -var="allocated_storage=${{ github.event.inputs.allocated_storage }}"
+          -var="db_cluster_name=${{ github.event.inputs.db_cluster_name }}" \
+          -var="region=${{ github.event.inputs.region }}" \
+          -var="db_size=${{ github.event.inputs.size }}"
 
-        echo "db_host=$(terraform output -raw db_host)"  >>"$GITHUB_OUTPUT"
-        echo "db_port=$(terraform output -raw db_port)"  >>"$GITHUB_OUTPUT"
-        echo "db_user=$(terraform output -raw db_user)"  >>"$GITHUB_OUTPUT"
-        echo "db_pass=$(terraform output -raw db_pass)"  >>"$GITHUB_OUTPUT"
+        # expose outputs for later steps
+        echo "db_host=$(terraform output -raw db_host)" >> "$GITHUB_OUTPUT"
+        echo "db_port=$(terraform output -raw db_port)" >> "$GITHUB_OUTPUT"
+        echo "db_user=$(terraform output -raw db_user)" >> "$GITHUB_OUTPUT"
+        echo "db_pass=$(terraform output -raw db_pass)" >> "$GITHUB_OUTPUT"
 
-    - name: Import baseline schemas
+    # ─────────────────────────────────────────────────────────
+    # 3) Import streamlined schema dumps
+    # ─────────────────────────────────────────────────────────
+    - name: Load baseline schema dumps
       if: success()
       env:
         DB_HOST: ${{ steps.tfout.outputs.db_host }}
@@ -59,17 +67,74 @@ jobs:
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y mysql-client
-        for db in axialy_admin axialy_ui ; do
-          echo ">> loading schema $db"
-          mysql --ssl-mode=REQUIRED -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" "$db" < "db/${db}.sql"
-        done
 
-    - name: Persist DB secrets in org
+        echo "Waiting for database cluster to be ready..."
+        sleep 30
+
+        # DigitalOcean clusters require SSL by default
+        for db in axialy_admin axialy_ui; do
+          echo ">> Importing schema into $db"
+          max_retries=3
+          retry_count=0
+          
+          while [ $retry_count -lt $max_retries ]; do
+            if mysql --ssl-mode=REQUIRED \
+                  --host="${DB_HOST}" --port="${DB_PORT}" \
+                  --user="${DB_USER}" --password="${DB_PASS}" \
+                  --connect-timeout=30 \
+                  "${db}" < "db/${db}.sql"; then
+              echo "✓ Schema imported successfully into $db"
+              break
+            else
+              retry_count=$((retry_count + 1))
+              if [ $retry_count -lt $max_retries ]; then
+                echo "Import failed, retrying in 10 seconds... (attempt $retry_count/$max_retries)"
+                sleep 10
+              else
+                echo "Failed to import schema after $max_retries attempts"
+                exit 1
+              fi
+            fi
+          done
+        done
+        echo "✓ All schemas imported successfully."
+
+    # ─────────────────────────────────────────────────────────
+    # 4) Store credentials as repository secrets
+    # ─────────────────────────────────────────────────────────
+    - name: Save DB credentials as repo secrets
       if: success()
       env:
         GH_TOKEN: ${{ secrets.GH_PAT }}
       run: |
+        if [ -z "$GH_TOKEN" ]; then
+          echo "::warning::GH_PAT secret not set. Cannot update repository secrets automatically."
+          exit 0
+        fi
+
         gh secret set DB_HOST     --body "${{ steps.tfout.outputs.db_host }}"
         gh secret set DB_PORT     --body "${{ steps.tfout.outputs.db_port }}"
         gh secret set DB_USER     --body "${{ steps.tfout.outputs.db_user }}"
         gh secret set DB_PASSWORD --body "${{ steps.tfout.outputs.db_pass }}"
+        echo "✓ Repository secrets updated."
+
+    # ─────────────────────────────────────────────────────────
+    # 5) Friendly summary
+    # ─────────────────────────────────────────────────────────
+    - name: Display next steps
+      run: |
+        echo "========================================"
+        echo "Database cluster deployed & initialized!"
+        echo "========================================"
+        echo "Cluster: ${{ github.event.inputs.db_cluster_name }}"
+        echo "Host   : ${{ steps.tfout.outputs.db_host }}"
+        echo "Port   : ${{ steps.tfout.outputs.db_port }}"
+        echo "User   : ${{ steps.tfout.outputs.db_user }}"
+        echo "========================================"
+        echo ""
+        echo "Next steps:"
+        echo "1. Run the 'Axialy Admin UI' workflow to deploy the application"
+        echo "2. Access the admin interface to complete initialization"
+        echo ""
+        echo "Note: Database credentials have been saved as GitHub secrets"
+        echo "========================================"
