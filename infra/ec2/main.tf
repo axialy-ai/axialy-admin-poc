@@ -1,7 +1,4 @@
-#################################
-#   VPC + SUBNET auto-detection #
-#################################
-
+# ────────── networking context ──────────
 data "aws_vpc" "default" {
   default = true
 }
@@ -10,37 +7,34 @@ data "aws_subnet_ids" "default" {
   vpc_id = data.aws_vpc.default.id
 }
 
-######################
-#   Security group   #
-######################
-
+# ────────── security group ──────────
 resource "aws_security_group" "admin" {
   name        = "${var.instance_name}-sg"
   description = "Allow SSH/HTTP/HTTPS"
   vpc_id      = data.aws_vpc.default.id
 
   ingress {
-    description = "SSH"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "SSH"
   }
 
   ingress {
-    description = "HTTP"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTP"
   }
 
   ingress {
-    description = "HTTPS"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS"
   }
 
   egress {
@@ -53,10 +47,7 @@ resource "aws_security_group" "admin" {
   tags = { Name = "${var.instance_name}-sg" }
 }
 
-######################
-#     EC2 instance   #
-######################
-
+# ────────── EC2 instance ──────────
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"] # Canonical
@@ -78,19 +69,13 @@ resource "aws_instance" "admin" {
   tags = { Name = var.instance_name }
 }
 
-#########################
-#  Elastic-IP binding   #
-#########################
-
+# ────────── Elastic-IP binding ──────────
 resource "aws_eip_association" "this" {
   allocation_id = var.elastic_ip_allocation_id
   instance_id   = aws_instance.admin.id
 }
 
-#############
-# Outputs   #
-#############
-
+# ────────── outputs ──────────
 output "instance_public_ip" {
   value       = aws_instance.admin.public_ip
   description = "Public IPv4 address"
