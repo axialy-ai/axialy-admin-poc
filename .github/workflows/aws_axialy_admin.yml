@@ -1,4 +1,3 @@
-# .github/workflows/aws_axialy_admin.yml
 name: Axialy Admin on AWS
 
 on:
