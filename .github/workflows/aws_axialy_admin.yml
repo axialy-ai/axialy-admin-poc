@@ -1,201 +1,113 @@
-name: Axialy Admin on AWS
+name: Axialy Admin UI
 
 on:
-  workflow_dispatch:        # manual only
+  workflow_dispatch:
     inputs:
       instance_name:
-        description: "EC2 instance Name tag"
+        description: EC2 instance Name tag
         required: true
         default: axialy-admin-prod
       region:
-        description: "AWS region"
+        description: AWS region
         required: true
         default: us-west-2
       instance_type:
-        description: "EC2 instance type"
+        description: EC2 instance type
         required: true
         default: t3.small
 
-# ──────────────────────────────────────────────────────────────
-# Shared secrets / vars
-# ──────────────────────────────────────────────────────────────
 env:
-  AWS_ACCESS_KEY_ID:               ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY:           ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  EC2_KEY_PAIR:                    ${{ secrets.EC2_KEY_PAIR }}
-  EC2_ELASTIC_IP_ALLOCATION_ID:    ${{ secrets.EC2_ELASTIC_IP_ALLOCATION_ID }}
-  EC2_SSH_PRIVATE_KEY:             ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-
-  DB_HOST:                         ${{ secrets.DB_HOST }}
-  DB_PORT:                         ${{ secrets.DB_PORT }}
-  DB_USER:                         ${{ secrets.DB_USER }}
-  DB_PASSWORD:                     ${{ secrets.DB_PASSWORD }}
-
-  ADMIN_DEFAULT_USER:              ${{ secrets.ADMIN_DEFAULT_USER }}
-  ADMIN_DEFAULT_EMAIL:             ${{ secrets.ADMIN_DEFAULT_EMAIL }}
-  ADMIN_DEFAULT_PASSWORD:          ${{ secrets.ADMIN_DEFAULT_PASSWORD }}
-
-  SMTP_HOST:                       ${{ secrets.SMTP_HOST }}
-  SMTP_PORT:                       ${{ secrets.SMTP_PORT }}
-  SMTP_USER:                       ${{ secrets.SMTP_USER }}
-  SMTP_PASSWORD:                   ${{ secrets.SMTP_PASSWORD }}
+  AWS_ACCESS_KEY_ID:         ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY:     ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  EC2_KEY_PAIR:              ${{ secrets.EC2_KEY_PAIR }}
+  EC2_ELASTIC_IP_ALLOCATION_ID: ${{ secrets.EC2_ELASTIC_IP_ALLOCATION_ID }}
+  EC2_SSH_PRIVATE_KEY:       ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+  DB_HOST:                   ${{ secrets.DB_HOST }}
+  DB_PORT:                   ${{ secrets.DB_PORT }}
+  DB_USER:                   ${{ secrets.DB_USER }}
+  DB_PASSWORD:               ${{ secrets.DB_PASSWORD }}
+  ADMIN_DEFAULT_USER:        ${{ secrets.ADMIN_DEFAULT_USER }}
+  ADMIN_DEFAULT_EMAIL:       ${{ secrets.ADMIN_DEFAULT_EMAIL }}
+  ADMIN_DEFAULT_PASSWORD:    ${{ secrets.ADMIN_DEFAULT_PASSWORD }}
+  SMTP_HOST:                 ${{ secrets.SMTP_HOST }}
+  SMTP_PORT:                 ${{ secrets.SMTP_PORT }}
+  SMTP_USER:                 ${{ secrets.SMTP_USER }}
+  SMTP_PASSWORD:             ${{ secrets.SMTP_PASSWORD }}
 
 jobs:
   deploy:
     runs-on: ubuntu-24.04
-
     steps:
-    # ──────────────────────────────────────────────────────────
-    # 1) Checkout only what we need
-    # ──────────────────────────────────────────────────────────
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        sparse-checkout: |
-          axialy-admin-product
-          infra/ec2
-
-    # ──────────────────────────────────────────────────────────
-    # 2) Terraform – provision / refresh instance
-    # ──────────────────────────────────────────────────────────
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: 1.6.6
-        terraform_wrapper: false
-
-    - name: Terraform init
-      run: terraform -chdir=infra/ec2 init -input=false
-
-    - name: Terraform apply
-      id: tfapply
-      run: |
-        terraform -chdir=infra/ec2 apply -auto-approve -input=false \
-          -var="instance_name=${{ inputs.instance_name }}" \
-          -var="region=${{ inputs.region }}" \
-          -var="instance_type=${{ inputs.instance_type }}" \
-          -var="key_name=$EC2_KEY_PAIR" \
-          -var="elastic_ip_allocation_id=$EC2_ELASTIC_IP_ALLOCATION_ID"
-
-        echo "INSTANCE_IP=$(terraform -chdir=infra/ec2 output -raw instance_public_ip)" >> "$GITHUB_ENV"
-
-    # ──────────────────────────────────────────────────────────
-    # 3) Prepare SSH key
-    # ──────────────────────────────────────────────────────────
-    - name: Prepare SSH key
-      run: |
-        echo "$EC2_SSH_PRIVATE_KEY" > pk.pem
-        chmod 600 pk.pem
-
-    # ──────────────────────────────────────────────────────────
-    # 4) Wait until the instance SSH port is reachable
-    # ──────────────────────────────────────────────────────────
-    - name: Wait for SSH
-      run: |
-        for i in {1..60}; do
-          if ssh -o StrictHostKeyChecking=no -i pk.pem ubuntu@"$INSTANCE_IP" "echo ok" >/dev/null 2>&1; then
-            echo "Instance is ready."
-            break
-          fi
-          echo "Waiting for instance… ($i/60)"
-          sleep 10
-        done
-
-    # ──────────────────────────────────────────────────────────
-    # 5) Package application + .env and upload
-    # ──────────────────────────────────────────────────────────
-    - name: Create application bundle
-      run: tar -czf axialy-admin.tar.gz -C axialy-admin-product .
-
-    - name: Create .env file
-      run: |
-        cat > axialy-admin.env <<EOF
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            axialy-admin-product
+            infra/ec2
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+          terraform_wrapper: false
+      - run: terraform -chdir=infra/ec2 init -input=false
+      - id: apply
+        run: |
+          terraform -chdir=infra/ec2 apply -auto-approve -input=false \
+            -var="instance_name=${{ inputs.instance_name }}" \
+            -var="region=${{ inputs.region }}" \
+            -var="instance_type=${{ inputs.instance_type }}" \
+            -var="key_name=$EC2_KEY_PAIR" \
+            -var="elastic_ip_allocation_id=$EC2_ELASTIC_IP_ALLOCATION_ID"
+          echo "INSTANCE_IP=$(terraform -chdir=infra/ec2 output -raw instance_public_ip)" >> $GITHUB_ENV
+      - run: |
+          echo "$EC2_SSH_PRIVATE_KEY" > pk.pem
+          chmod 600 pk.pem
+      - run: |
+          for i in {1..60}; do
+            if ssh -o StrictHostKeyChecking=no -i pk.pem ubuntu@$INSTANCE_IP "echo ok" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 10
+          done
+      - run: |
+          tar -czf axialy-admin.tar.gz -C axialy-admin-product .
+          scp -o StrictHostKeyChecking=no -i pk.pem axialy-admin.tar.gz ubuntu@$INSTANCE_IP:/home/ubuntu/
+      - run: |
+          ssh -o StrictHostKeyChecking=no -i pk.pem ubuntu@$INSTANCE_IP <<ENDSSH
+            sudo apt-get update -qq
+            sudo apt-get install -y nginx php8.1-fpm php8.1-mysql php8.1-curl php8.1-xml php8.1-zip php8.1-gd php8.1-mbstring
+            sudo mkdir -p /var/www/axialy-admin
+            sudo tar -xzf /home/ubuntu/axialy-admin.tar.gz -C /var/www/axialy-admin
+            cat > /var/www/axialy-admin/.env <<EOF
 DB_HOST=${DB_HOST}
 DB_PORT=${DB_PORT}
 DB_NAME=axialy_admin
 DB_USER=${DB_USER}
 DB_PASSWORD=${DB_PASSWORD}
-
 ADMIN_DEFAULT_USER=${ADMIN_DEFAULT_USER}
 ADMIN_DEFAULT_EMAIL=${ADMIN_DEFAULT_EMAIL}
 ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD}
-
 SMTP_HOST=${SMTP_HOST}
 SMTP_PORT=${SMTP_PORT}
 SMTP_USER=${SMTP_USER}
 SMTP_PASSWORD=${SMTP_PASSWORD}
 EOF
-
-    - name: Upload files
-      run: |
-        scp -o StrictHostKeyChecking=no -i pk.pem axialy-admin.tar.gz ubuntu@"$INSTANCE_IP":/home/ubuntu/
-        scp -o StrictHostKeyChecking=no -i pk.pem axialy-admin.env   ubuntu@"$INSTANCE_IP":/home/ubuntu/
-
-    # ──────────────────────────────────────────────────────────
-    # 6) Remote bootstrap (Nginx + PHP + deploy files)
-    # ──────────────────────────────────────────────────────────
-    - name: Configure instance and deploy
-      run: |
-        ssh -o StrictHostKeyChecking=no -i pk.pem ubuntu@"$INSTANCE_IP" <<'REMOTE'
-          set -e
-
-          # --- install runtime packages ---
-          sudo apt-get update -qq
-          sudo apt-get install -y nginx php8.1-fpm php8.1-mysql \
-                                  php8.1-curl php8.1-xml php8.1-zip \
-                                  php8.1-gd php8.1-mbstring
-
-          # --- application files ---
-          sudo mkdir -p /var/www/axialy-admin
-          sudo tar -xzf /home/ubuntu/axialy-admin.tar.gz -C /var/www/axialy-admin
-          sudo mv /home/ubuntu/axialy-admin.env /var/www/axialy-admin/.env
-          sudo chmod 640 /var/www/axialy-admin/.env
-          sudo chown -R www-data:www-data /var/www/axialy-admin
-
-          # --- Nginx virtual host ---
-          sudo rm -f /etc/nginx/sites-enabled/default
-          sudo bash -c 'cat > /etc/nginx/sites-available/axialy-admin' <<'NGINX'
+            sudo chmod 640 /var/www/axialy-admin/.env
+            sudo chown -R www-data:www-data /var/www/axialy-admin
+            sudo rm -f /etc/nginx/sites-enabled/default
+            sudo bash -c 'cat > /etc/nginx/sites-enabled/axialy-admin <<NGINX
 server {
   listen 80 default_server;
   listen [::]:80 default_server;
-
   root /var/www/axialy-admin;
   index index.php index.html;
-
   location / {
-    try_files $uri $uri/ /index.php?$args;
+    try_files \$uri \$uri/ /index.php?\$args;
   }
-
-  location ~ \.php$ {
+  location ~ \.php\$ {
     include snippets/fastcgi-php.conf;
     fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
   }
-
-  location ~ /\. {
-    deny all;
-  }
-
-  add_header X-Frame-Options "SAMEORIGIN" always;
-  add_header X-Content-Type-Options "nosniff" always;
-  add_header X-XSS-Protection "1; mode=block" always;
 }
-NGINX
-          sudo ln -sf /etc/nginx/sites-available/axialy-admin /etc/nginx/sites-enabled/
-
-          # --- restart services ---
-          sudo systemctl restart php8.1-fpm
-          sudo systemctl restart nginx
-REMOTE
-
-    # ──────────────────────────────────────────────────────────
-    # 7) Friendly summary
-    # ──────────────────────────────────────────────────────────
-    - name: Done
-      run: |
-        echo ""
-        echo "========================================"
-        echo "Axialy Admin deployed!"
-        echo "----------------------------------------"
-        echo "Public IP : $INSTANCE_IP"
-        echo "SSH user  : ubuntu"
-        echo "========================================"
+NGINX'
+            sudo systemctl restart php8.1-fpm
+            sudo systemctl restart nginx
+ENDSSH
