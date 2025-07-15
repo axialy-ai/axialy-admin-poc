@@ -103,7 +103,6 @@ jobs:
             SMTP_PORT=${SMTP_PORT}
             SMTP_USER=${SMTP_USER}
             SMTP_PASSWORD=${SMTP_PASSWORD}
-            EOF
             sudo chmod 640 /var/www/axialy-admin/.env
             sudo chown -R www-data:www-data /var/www/axialy-admin
             sudo tee /etc/nginx/sites-available/axialy-admin >/dev/null <<'NGINX'
