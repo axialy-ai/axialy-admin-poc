@@ -1,3 +1,7 @@
+data "aws_vpc" "default" {
+  default = true          # ← asks AWS for the account/region’s default VPC
+}
+
 resource "aws_security_group" "admin" {
   name        = "${var.instance_name}-sg"
   description = "Allow SSH/HTTP/HTTPS"
