@@ -1,4 +1,4 @@
-name: Axialy DB
+name: Axialy DB on AWS
 
 on:
   workflow_dispatch:
