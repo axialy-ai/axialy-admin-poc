@@ -1,8 +1,12 @@
-# infra/rds/variables.tf
 variable "region" {
   description = "AWS region"
   type        = string
   default     = "us-west-2"
+}
+
+variable "db_identifier" {
+  description = "Identifier prefix shared by Admin & UI DB instances"
+  type        = string
 }
 
 variable "db_instance_class" {
@@ -11,13 +15,8 @@ variable "db_instance_class" {
   default     = "db.t3.micro"
 }
 
-variable "db_identifier" {
-  description = "Identifier prefix for DB instances"
-  type        = string
-}
-
 variable "db_allocated_storage" {
-  description = "Allocated storage (GiB)"
+  description = "Allocated storage in GiB"
   type        = number
   default     = 20
 }
