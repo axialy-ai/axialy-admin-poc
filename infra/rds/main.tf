@@ -1,3 +1,7 @@
+data "aws_vpc" "default" {
+  default = true          # ← asks AWS for the account/region’s default VPC
+}
+
 resource "aws_security_group" "rds" {
   name        = "${var.db_identifier}-rds-sg"
   description = "Allow MySQL traffic"
