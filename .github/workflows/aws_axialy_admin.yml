@@ -95,7 +95,4 @@ server {
     fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
   }
 }
-NGINX'
-            sudo systemctl restart php8.1-fpm
-            sudo systemctl restart nginx
-ENDSSH
+
