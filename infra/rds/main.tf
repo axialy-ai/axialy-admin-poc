@@ -16,7 +16,7 @@ data "aws_subnets" "default" {
 # Security group for the Postgres cluster  #
 ############################################
 resource "aws_security_group" "rds" {
-  name        = "rds-sg"
+  name        = "${var.db_identifier}-sg"
   description = "Security group for RDS"
   vpc_id      = data.aws_vpc.default.id
 
@@ -40,7 +40,7 @@ resource "aws_security_group" "rds" {
 # Subnet group & random DB password        #
 ############################################
 resource "aws_db_subnet_group" "rds" {
-  name       = "rds-subnet-group"
+  name       = "${var.db_identifier}-subnets"
   subnet_ids = data.aws_subnets.default.ids
 }
 
@@ -53,11 +53,11 @@ resource "random_password" "db_password" {
 # PostgreSQL instance                      #
 ############################################
 resource "aws_db_instance" "admin" {
-  identifier             = "axialy-admin"
-  allocated_storage      = 20
+  identifier             = var.db_identifier
+  allocated_storage      = var.db_allocated_storage
   engine                 = "postgres"
   engine_version         = "16"
-  instance_class         = "db.t3.micro"
+  instance_class         = var.db_instance_class
 
   username               = var.db_user
   password               = random_password.db_password.result
