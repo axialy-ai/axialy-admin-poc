@@ -82,5 +82,5 @@ resource "aws_instance" "admin" {
 resource "aws_eip" "admin" {
   allocation_id = var.elastic_ip_allocation_id
   instance      = aws_instance.admin.id
-  vpc           = true
+  # The "vpc" argument was removed in AWS provider 6.x ─ simply omit it.
 }
